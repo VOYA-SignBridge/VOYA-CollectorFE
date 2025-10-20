@@ -3,11 +3,12 @@ import { validateUploadResult } from "./validators";
 import type { Result } from "./validators";
 import type { UploadResult, CameraUploadPayload } from "../types";
 
-export const uploadVideo = async (file: File, user: string, label: string): Promise<Result<UploadResult>> => {
+export const uploadVideo = async (file: File, user: string, label: string, dialect?: string): Promise<Result<UploadResult>> => {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("user", user);
   formData.append("label", label);
+  if (dialect) formData.append('dialect', dialect);
 
   // Debug: log FormData keys and file info before sending (helps diagnose missing fields in browser)
   try {
@@ -22,9 +23,10 @@ export const uploadVideo = async (file: File, user: string, label: string): Prom
     // Note: this will run in the browser when uploadVideo is invoked from frontend code
     // and helps confirm the fields actually exist before the request leaves the client.
     console.debug("[uploadVideo] formData entries:", debugEntries);
-  } catch {
-    // ignore debug failures
-  }
+    } catch (err) {
+      // ignore debug failures
+      console.debug('uploadVideo debug failed', err);
+    }
 
   // retry logic: initial try + 2 retries = 3 attempts
   const maxAttempts = 3;

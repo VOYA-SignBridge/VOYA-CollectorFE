@@ -16,6 +16,19 @@ export default function UploadVideoForm({ onError }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [label, setLabel] = useState("");
   const [user, setUser] = useState("");
+  const [dialect, setDialect] = useState<string>(() => {
+    return localStorage.getItem('dialectSelected') || 'Bắc';
+  });
+  const [dialectList, setDialectList] = useState<string[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('dialectList') || 'null');
+      if (Array.isArray(stored) && stored.length > 0) return stored;
+    } catch (err) {
+      // ignore parse errors
+      void err;
+    }
+    return ['Bắc', 'Trung', 'Nam'];
+  });
   const [result, setResult] = useState<UploadResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -27,7 +40,7 @@ export default function UploadVideoForm({ onError }: Props) {
     }
     setLoading(true);
     try {
-      const res = await uploadVideo(file, user, label);
+      const res = await uploadVideo(file, user, label, dialect);
       if (res.ok) {
         setResult({
           success: true,
@@ -193,6 +206,35 @@ export default function UploadVideoForm({ onError }: Props) {
               disabled={loading}
             />
             <p className="text-xs text-gray-500">Unique identifier for the person in the video</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-700">Bộ ngôn ngữ (Dialect)</label>
+            <select
+              value={dialect}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === 'Khác') {
+                  const name = window.prompt('Nhập tên bộ mới:');
+                  if (name && name.trim()) {
+                    const updated = Array.from(new Set([...dialectList, name.trim()]));
+                    setDialectList(updated);
+                    setDialect(name.trim());
+                    localStorage.setItem('dialectList', JSON.stringify(updated));
+                    localStorage.setItem('dialectSelected', name.trim());
+                  }
+                } else {
+                  setDialect(v);
+                  localStorage.setItem('dialectSelected', v);
+                }
+              }}
+              className="input"
+              disabled={loading}
+            >
+              {dialectList.map(d => <option key={d} value={d}>{d}</option>)}
+              <option value="Khác">Khác (thêm mới)</option>
+            </select>
+            <p className="text-xs text-gray-500">Chọn bộ ngôn ngữ kí hiệu liên quan</p>
           </div>
         </div>
 
