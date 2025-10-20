@@ -1,11 +1,12 @@
 import { useState } from "react";
-import type { Sample as SampleT, SessionStats, MediaPipeLandmark } from "../types";
+import type { Sample as SampleT, SessionStats, MediaPipeLandmark, QualityInfo, CameraInfo } from "../types";
 import { uploadCamera } from "../api/upload";
 import CaptureGuide from "./CaptureGuide";
 import SessionPanel from "./SessionPanel";
 import SessionSummary from "./SessionSumary";
 import FullscreenCaptureModal from "./FullscreenCaptureModal";
 import Button from "./ui/Button";
+import { TARGET_FRAMES, CAPTURE_COUNT } from "../config/capture";
 
 type Props = {
   onError?: (msg: string) => void;
@@ -18,16 +19,18 @@ export default function CaptureCamera({ onError }: Props) {
   const [showGuide, setShowGuide] = useState(false);
   // Removed preview state - using fullscreen capture only
   const [showFullscreen, setShowFullscreen] = useState(false);
-  const [uploading, setUploading] = useState(false);
   
-  // New capture settings
-  const [targetFrames, setTargetFrames] = useState(30); // Default 30 frames (~1 second at 30fps)
-  const [captureCount, setCaptureCount] = useState(1); // Default 1 capture
+  // Capture settings are fixed for public uploader — sourced from config
+  const targetFrames = TARGET_FRAMES;
+  const captureCount = CAPTURE_COUNT;
 
   const [sessionId] = useState(() => Date.now().toString());
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [samples, setSamples] = useState<SampleT[]>([]);
   const [sampleCounter, setSampleCounter] = useState(1);
+
+  // Toggle to temporarily hide advanced/session UI without deleting it
+  const SHOW_ADVANCED = false;
 
   const handleFinish = () => {
     const totalSamples = samples.length;
@@ -63,11 +66,24 @@ export default function CaptureCamera({ onError }: Props) {
     face: MediaPipeLandmark[];
     left_hand: MediaPipeLandmark[];
     right_hand: MediaPipeLandmark[];
-  }>, capturedLabel: string, capturedUser: string) => {
-    setUploading(true);
+  }>, capturedLabel: string, capturedUser: string, meta?: { camera_info?: CameraInfo; quality_info?: QualityInfo; dialect?: string }) => {
+    console.log(`Parent received capture: ${capturedLabel} with ${capturedFrames.length} frames`);
+    
+    // Don't set uploading state to avoid blocking the modal
     try {
       // Prepare data for backend API
-      const payload = {
+      const payload: {
+        user: string;
+        label: string;
+        session_id: string;
+        dialect?: string;
+        frames: Array<{ timestamp: number; landmarks: {
+          pose?: MediaPipeLandmark[];
+          face?: MediaPipeLandmark[];
+          left_hand?: MediaPipeLandmark[];
+          right_hand?: MediaPipeLandmark[];
+        } }>;
+      } = {
         user: capturedUser,
         label: capturedLabel,
         session_id: sessionId,
@@ -76,40 +92,49 @@ export default function CaptureCamera({ onError }: Props) {
           landmarks: frame
         }))
       };
+      if (meta?.dialect) payload.dialect = meta.dialect;
 
-      // Call real API
-      const result = await uploadCamera(payload);
-      
-      if (result.ok) {
-        const sample: SampleT = {
-          id: sampleCounter,
-          session_id: sessionId,
-          label: capturedLabel,
-          user: capturedUser,
-          frames: capturedFrames.length,
-          uploaded: true,
-          sample_id: result.data.id?.toString(),
-        };
+      console.log('Uploading payload to backend...');
+      // Call real API in background
+      uploadCamera(payload).then((result) => {
+        if (result.ok) {
+          const sample: SampleT = {
+            id: sampleCounter,
+            session_id: sessionId,
+            label: capturedLabel,
+            user: capturedUser,
+            frames: capturedFrames.length,
+            uploaded: true,
+            sample_id: result.data.id?.toString(),
+          };
+          if (meta?.dialect) sample.dialect = meta.dialect;
 
-        setSamples(prev => [...prev, sample]);
-        setSampleCounter(prev => prev + 1);
-        
-        console.log(`Sample "${capturedLabel}" captured and uploaded successfully!`);
-      } else {
-        if (onError) {
-          onError(result.error || 'Upload failed. Please try again.');
+          setSamples(prev => [...prev, sample]);
+          setSampleCounter(prev => prev + 1);
+          
+          console.log(`Sample "${capturedLabel}" (${capturedFrames.length} frames) uploaded successfully! Total samples: ${samples.length + 1}`);
+        } else {
+          console.error('Upload failed:', result.error);
+          if (onError) {
+            onError(result.error || 'Upload failed. Please try again.');
+          }
         }
-      }
+      }).catch((error) => {
+        console.error('Upload failed:', error);
+        if (onError) {
+          onError('Upload failed. Please try again.');
+        }
+      });
+      
     } catch (error) {
-      console.error('Upload failed:', error);
+      console.error('Upload preparation failed:', error);
       if (onError) {
         onError('Upload failed. Please try again.');
       }
-    } finally {
-      setUploading(false);
     }
     
-    setShowFullscreen(false);
+    // Don't close fullscreen modal here - let the modal manage its own lifecycle
+    console.log('Capture processed, modal should continue if more captures needed');
   };
 
 
@@ -130,59 +155,18 @@ export default function CaptureCamera({ onError }: Props) {
             Optimized for speed and accuracy.
           </p>
 
-          {/* Capture Settings */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-md mx-auto mb-8">
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">Target Frames</label>
-              <input
-                type="number"
-                min="10"
-                max="300"
-                value={targetFrames}
-                onChange={(e) => setTargetFrames(parseInt(e.target.value) || 30)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="30"
-              />
-              <p className="text-xs text-gray-500">Frames to capture per sample (10-300)</p>
-            </div>
-            
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">Capture Count</label>
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={captureCount}
-                onChange={(e) => setCaptureCount(parseInt(e.target.value) || 1)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="1"
-              />
-              <p className="text-xs text-gray-500">Number of captures to take (1-20)</p>
-            </div>
-          </div>
+          {/* Capture settings are fixed for public uploader. Edit src/config/capture.ts to change them. */}
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-6">
             <Button
               onClick={() => setShowFullscreen(true)}
               className="px-8 py-4 text-lg font-semibold min-w-48"
               variant="primary"
-              disabled={uploading}
             >
-              {uploading ? (
-                <>
-                  <svg className="w-6 h-6 mr-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <svg className="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                  </svg>
-                  Launch Fullscreen Capture
-                </>
-              )}
+              <svg className="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+              Launch Fullscreen Capture
             </Button>
             
             <Button
@@ -221,90 +205,94 @@ export default function CaptureCamera({ onError }: Props) {
         </div>
       </div>
 
-      {/* Productivity Panel */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">📈 Collection Progress</h3>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => {
-                // Auto-fill next sample
-                setSampleCounter(prev => prev + 1);
-                setLabel("");
-              }}
-              className="btn btn-ghost text-sm"
-            >
-              Next Sample
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="text-center p-3 bg-blue-50 rounded-lg">
-            <div className="text-2xl font-bold text-blue-600">{samples.length}</div>
-            <div className="text-xs text-blue-600">Samples Today</div>
-          </div>
-          <div className="text-center p-3 bg-green-50 rounded-lg">
-            <div className="text-2xl font-bold text-green-600">
-              {samples.length > 0 ? Math.round((samples.length / 60) * 100) / 100 : 0}
-            </div>
-            <div className="text-xs text-green-600">Samples/min</div>
-          </div>
-          <div className="text-center p-3 bg-purple-50 rounded-lg">
-            <div className="text-2xl font-bold text-purple-600">
-              {samples.reduce((sum, s) => sum + (s.frames || 0), 0)}
-            </div>
-            <div className="text-xs text-purple-600">Total Frames</div>
-          </div>
-          <div className="text-center p-3 bg-yellow-50 rounded-lg">
-            <div className="text-2xl font-bold text-yellow-600">
-              {new Set(samples.map(s => s.label)).size}
-            </div>
-            <div className="text-xs text-yellow-600">Unique Labels</div>
-          </div>
-        </div>
-
-        {/* Quick Actions for Efficiency */}
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-700">Quick Actions</span>
-            <div className="flex space-x-2">
+      {/* Productivity Panel (hidden by feature flag during public/simple mode) */}
+      {SHOW_ADVANCED && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">📈 Collection Progress</h3>
+            <div className="flex items-center space-x-2">
               <button
                 onClick={() => {
-                  // Clear all samples
-                  if (confirm('Clear all samples from this session?')) {
-                    setSamples([]);
-                    setSampleCounter(1);
-                  }
+                  // Auto-fill next sample
+                  setSampleCounter(prev => prev + 1);
+                  setLabel("");
                 }}
-                className="btn btn-ghost text-xs text-red-600"
+                className="btn btn-ghost text-sm"
               >
-                Clear Session
-              </button>
-              <button
-                onClick={() => {
-                  // Duplicate last sample settings
-                  const lastSample = samples[samples.length - 1];
-                  if (lastSample) {
-                    setLabel(lastSample.label || "");
-                  }
-                }}
-                className="btn btn-ghost text-xs"
-                disabled={samples.length === 0}
-              >
-                Repeat Last
+                Next Sample
               </button>
             </div>
           </div>
-        </div>
-      </div>
 
-      <SessionPanel
-        sessionId={sessionId}
-        samples={samples}
-        onFinish={handleFinish}
-        onDelete={handleDelete}
-      />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center p-3 bg-blue-50 rounded-lg">
+              <div className="text-2xl font-bold text-blue-600">{samples.length}</div>
+              <div className="text-xs text-blue-600">Samples Today</div>
+            </div>
+            <div className="text-center p-3 bg-green-50 rounded-lg">
+              <div className="text-2xl font-bold text-green-600">
+                {samples.length > 0 ? Math.round((samples.length / 60) * 100) / 100 : 0}
+              </div>
+              <div className="text-xs text-green-600">Samples/min</div>
+            </div>
+            <div className="text-center p-3 bg-purple-50 rounded-lg">
+              <div className="text-2xl font-bold text-purple-600">
+                {samples.reduce((sum, s) => sum + (s.frames || 0), 0)}
+              </div>
+              <div className="text-xs text-purple-600">Total Frames</div>
+            </div>
+            <div className="text-center p-3 bg-yellow-50 rounded-lg">
+              <div className="text-2xl font-bold text-yellow-600">
+                {new Set(samples.map(s => s.label)).size}
+              </div>
+              <div className="text-xs text-yellow-600">Unique Labels</div>
+            </div>
+          </div>
+
+          {/* Quick Actions for Efficiency */}
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">Quick Actions</span>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => {
+                    // Clear all samples
+                    if (confirm('Clear all samples from this session?')) {
+                      setSamples([]);
+                      setSampleCounter(1);
+                    }
+                  }}
+                  className="btn btn-ghost text-xs text-red-600"
+                >
+                  Clear Session
+                </button>
+                <button
+                  onClick={() => {
+                    // Duplicate last sample settings
+                    const lastSample = samples[samples.length - 1];
+                    if (lastSample) {
+                      setLabel(lastSample.label || "");
+                    }
+                  }}
+                  className="btn btn-ghost text-xs"
+                  disabled={samples.length === 0}
+                >
+                  Repeat Last
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {SHOW_ADVANCED && (
+        <SessionPanel
+          sessionId={sessionId}
+          samples={samples}
+          onFinish={handleFinish}
+          onDelete={handleDelete}
+        />
+      )}
 
       {/* Fullscreen Modal */}
       {showFullscreen && (
@@ -328,6 +316,48 @@ export default function CaptureCamera({ onError }: Props) {
           onClose={() => setSessionStats(null)}
         />
       )}
+
+      {/* Simple collection statistics (always shown for public UI) */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-gray-700">📋 Simple Collection Stats</h3>
+          <div className="text-xs text-gray-500">Updated live</div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-3">
+          <div className="p-3 bg-blue-50 rounded-lg text-center">
+            <div className="text-lg font-bold text-blue-600">{samples.length}</div>
+            <div className="text-xs text-gray-600">Total captures</div>
+          </div>
+          <div className="p-3 bg-yellow-50 rounded-lg text-center">
+            <div className="text-lg font-bold text-yellow-600">{new Set(samples.map(s => s.label)).size}</div>
+            <div className="text-xs text-gray-600">Unique words collected</div>
+          </div>
+          <div className="p-3 bg-green-50 rounded-lg text-center">
+            <div className="text-lg font-bold text-green-600">{samples.reduce((sum, s) => sum + (s.frames || 0), 0)}</div>
+            <div className="text-xs text-gray-600">Total frames</div>
+          </div>
+        </div>
+
+        <div className="text-sm text-gray-700">
+          <div className="font-medium mb-2">Per-word capture counts</div>
+          {samples.length === 0 ? (
+            <div className="text-xs text-gray-500">No captures yet</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {Object.entries(samples.reduce((acc: Record<string, number>, s) => {
+                const lbl = s.label || 'unknown';
+                acc[lbl] = (acc[lbl] || 0) + 1;
+                return acc;
+              }, {})).map(([labelName, count]) => (
+                <div key={labelName} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded">
+                  <div className="text-sm text-gray-800">{labelName}</div>
+                  <div className="text-xs text-gray-600">{count}×</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

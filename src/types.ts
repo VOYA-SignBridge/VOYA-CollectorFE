@@ -13,6 +13,7 @@ export interface Sample {
   sample_id?: string; // used by SamplesPage
   id?: number; // used by SessionPanel
   label?: string;
+  dialect?: string;
   file_path?: string;
   created_at?: string;
   session_id?: string;
@@ -51,6 +52,7 @@ export interface MediaPipeLandmark {
 export interface CameraUploadPayload {
   user: string;
   label: string;
+  dialect?: string;
   session_id: string;
   frames: Array<{
     timestamp: number;
@@ -61,6 +63,22 @@ export interface CameraUploadPayload {
       right_hand?: MediaPipeLandmark[];
     };
   }>;
+}
+
+export interface CameraInfo {
+  userAgent?: string;
+  deviceMemory?: number | null;
+  hardwareConcurrency?: number | null;
+  screen?: { width: number; height: number } | null;
+  frameIntervalMs?: number | null;
+}
+
+export interface QualityInfo {
+  framesCollected: number;
+  framesAccepted?: number; // after simple client-side filter
+  avgPoseLandmarksPerFrame?: number;
+  percentFramesWithHands?: number;
+  confidenceSummary?: { min?: number; max?: number; avg?: number };
 }
 
 export type JobStatus = {

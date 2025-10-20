@@ -2,10 +2,11 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import Layout from "./components/Layout";
 import { Suspense, lazy } from "react";
 
-const LabelsPage = lazy(() => import("./pages/LabelsPage"));
+// const DashboardPage = lazy(() => import("./components/dashboard/AnalyticsOverview"));
+// const LabelsPage = lazy(() => import("./pages/LabelsPage"));
 const UploadPage = lazy(() => import("./pages/UploadPage"));
-const JobsPage = lazy(() => import("./pages/JobsPage"));
-const SamplesPage = lazy(() => import("./pages/SamplesPage"));
+// const JobsPage = lazy(() => import("./pages/JobsPage"));
+// const SamplesPage = lazy(() => import("./pages/SamplesPage"));
 
 function App() {
   return (
@@ -13,11 +14,12 @@ function App() {
         <Layout>
           <Suspense fallback={<div className="p-6">Loading...</div>}>
             <Routes>
-              <Route path="/labels" element={<LabelsPage />} />
+              {/* <Route path="/dashboard" element={<DashboardPage />} /> */}
+              {/* <Route path="/labels" element={<LabelsPage />} /> */}
               <Route path="/upload" element={<UploadPage />} />
-              <Route path="/jobs" element={<JobsPage />} />
-              <Route path="/samples" element={<SamplesPage />} />
-              <Route path="/" element={<Navigate to="/labels" />} />
+              {/* <Route path="/jobs" element={<JobsPage />} /> */}
+              {/* <Route path="/samples" element={<SamplesPage />} /> */}
+              <Route path="/" element={<Navigate to="/upload" />} />
             </Routes>
           </Suspense>
         </Layout>

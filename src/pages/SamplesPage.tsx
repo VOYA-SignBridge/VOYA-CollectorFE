@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { getSamples, getSampleData } from "../api/dataset";
+import { useEffect, useState, useMemo } from "react";
+import { getSamples, getSampleData, deleteSample } from "../api/dataset";
 import SamplePreview from "../components/SamplePreview";
 import type { Sample as SampleT, Filters } from "../types";
 import ErrorBanner from "../components/ErrorBanner";
@@ -17,6 +17,10 @@ export default function SamplesPage() {
   const [error, setError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [selectedSample, setSelectedSample] = useState<SampleT | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
   
   // Filters
   const [filters, setFilters] = useState<Filters>({
@@ -76,6 +80,21 @@ export default function SamplesPage() {
     setFilteredSamples(filtered);
   }, [samples, filters]);
 
+  const searched = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return filteredSamples;
+    return filteredSamples.filter(s => (
+      (s.sample_id || '').toLowerCase().includes(q) ||
+      (s.label || '').toLowerCase().includes(q) ||
+      (s.user || '').toLowerCase().includes(q)
+    ));
+  }, [filteredSamples, search]);
+
+  const paged = useMemo(() => {
+    const start = (page - 1) * limit;
+    return searched.slice(start, start + limit);
+  }, [searched, page, limit]);
+
   const handlePreview = async (sample: SampleT) => {
     if (!sample.sample_id) return;
     
@@ -91,6 +110,28 @@ export default function SamplesPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg || "Failed to preview sample");
+    }
+  };
+
+  // Note: deleted using API directly from action buttons below
+
+  const handleDownloadSample = async (sampleId: string | undefined) => {
+    if (!sampleId) return;
+    
+    try {
+      const buf = await getSampleData(sampleId);
+      const blob = new Blob([buf], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sample_${sampleId}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg || "Failed to download sample");
     }
   };
 
@@ -135,7 +176,7 @@ export default function SamplesPage() {
         />
       )}
 
-      {/* Filters Panel */}
+  {/* Filters Panel */}
       {showFilters && (
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
@@ -197,13 +238,30 @@ export default function SamplesPage() {
       {/* Samples Table */}
       <div className="card">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-            <span className="mr-2">📊</span>
-            Dataset Samples
-            <Badge variant="info" className="ml-3">
-              {filteredSamples.length} samples
-            </Badge>
-          </h2>
+          <div className="flex-1 mr-4">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center mb-2">
+              <span className="mr-2">📊</span>
+              Dataset Samples
+              <Badge variant="info" className="ml-3">
+                {filteredSamples.length} samples
+              </Badge>
+            </h2>
+            <div className="flex items-center gap-3">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search sample id, label or user..."
+                className="input w-64"
+              />
+              <div className="text-sm text-gray-500">Showing {searched.length} / {filteredSamples.length}</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => { if (confirm('Export current view to CSV?')) { /* implement export */ } }}>Export</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setSelectedIds([]); setSearch(''); setFilters({ user: '', label: '', date: '' }); }}>Reset</Button>
+          </div>
         </div>
 
         {loading ? (
@@ -211,7 +269,7 @@ export default function SamplesPage() {
             <LoadingSpinner size="lg" className="text-indigo-400" />
             <span className="ml-3 text-gray-600">Loading samples...</span>
           </div>
-        ) : filteredSamples.length === 0 ? (
+  ) : filteredSamples.length === 0 ? (
           <div className="text-center py-12">
             <div className="text-4xl mb-3">📭</div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
@@ -234,6 +292,12 @@ export default function SamplesPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-700">
+                  <th className="text-left py-3 px-4 font-medium text-gray-300 w-12">
+                    <input type="checkbox" checked={selectedIds.length > 0 && selectedIds.length === searched.length} onChange={(e) => {
+                      if (e.target.checked) setSelectedIds(searched.map(s => s.sample_id || ''));
+                      else setSelectedIds([]);
+                    }} />
+                  </th>
                   <th className="text-left py-3 px-4 font-medium text-gray-300">Sample ID</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-300">Label</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-300">User</th>
@@ -244,11 +308,18 @@ export default function SamplesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredSamples.map((sample, index) => (
+                {paged.map((sample, index) => (
                   <tr 
                     key={sample.sample_id || index} 
                     className="border-b border-gray-800 hover:bg-white/5 transition-colors"
                   >
+                    <td className="py-3 px-4">
+                      <input type="checkbox" checked={selectedIds.includes(sample.sample_id || '')} onChange={(e) => {
+                        const id = sample.sample_id || '';
+                        if (e.target.checked) setSelectedIds(prev => Array.from(new Set([...prev, id])));
+                        else setSelectedIds(prev => prev.filter(x => x !== id));
+                      }} />
+                    </td>
                     <td className="py-3 px-4">
                       <div className="font-mono text-sm text-indigo-400">
                         {sample.sample_id || `sample_${index}`}
@@ -272,13 +343,41 @@ export default function SamplesPage() {
                       {sample.created_at ? new Date(sample.created_at).toLocaleDateString() : "—"}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <Button 
-                        variant="ghost" 
-                        size="sm"
-                        onClick={() => handlePreview(sample)}
-                      >
-                        Preview
-                      </Button>
+                      <div className="flex items-center gap-2 justify-end">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handlePreview(sample)}
+                        >
+                          👁️ Preview
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={async () => {
+                            if (!sample.sample_id) return;
+                            if (!confirm('Delete this sample?')) return;
+                            try {
+                              const res = await deleteSample(sample.sample_id);
+                              if (res.ok) setSamples(prev => prev.filter(s => s.sample_id !== sample.sample_id));
+                              else setError(`Delete failed: ${res.statusText}`);
+                            } catch {
+                              setError('Delete failed');
+                            }
+                          }}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          🗑️ Delete
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleDownloadSample(sample.sample_id)}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          💾 Download
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -286,6 +385,41 @@ export default function SamplesPage() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Pagination / Bulk actions footer */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="danger" size="sm" onClick={async () => {
+            if (selectedIds.length === 0) return alert('Select samples to delete');
+            if (!confirm(`Delete ${selectedIds.length} samples?`)) return;
+            for (const id of selectedIds) {
+              try { await deleteSample(id); } catch { /* ignore */ }
+            }
+            setSamples(prev => prev.filter(s => !selectedIds.includes(s.sample_id || '')));
+            setSelectedIds([]);
+          }}>Delete Selected</Button>
+          <Button variant="secondary" size="sm" onClick={() => {
+            // Export selected as JSON
+            const toExport = samples.filter(s => selectedIds.includes(s.sample_id || ''));
+            const blob = new Blob([JSON.stringify(toExport, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `samples-${Date.now()}.json`; a.click(); URL.revokeObjectURL(url);
+          }}>Export Selected</Button>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-gray-500">Page</div>
+          <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }} className="input w-24 text-sm">
+            {[10,25,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
+          </select>
+          <div className="text-sm">{Math.max(1, Math.ceil(searched.length / limit))} pages</div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}>Prev</Button>
+            <div className="px-2">{page}</div>
+            <Button size="sm" onClick={() => setPage(p => Math.min(Math.max(1, Math.ceil(searched.length / limit)), p+1))} disabled={page >= Math.ceil(searched.length / limit)}>Next</Button>
+          </div>
+        </div>
       </div>
 
       {/* Preview Modal */}

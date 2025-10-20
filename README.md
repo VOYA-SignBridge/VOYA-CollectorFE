@@ -299,85 +299,54 @@ npm run build
 npm run preview
 ```
 
-### Environment Variables
+## 🔔 Cập nhật & Thông tin bổ sung
 
-```bash
-# Production environment
-VITE_API_URL=https://your-backend-api.com
-NODE_ENV=production
+### 🛠️ Tối ưu hoá thu dữ liệu (capture)
+
+- Frame interval control: `FullscreenCaptureModal` hiện hỗ trợ điều chỉnh khoảng thời gian giữa 2 frame (ms) bằng slider và các preset (30/15/10/6/5/3 FPS). Mặc định là 100ms (~10 FPS).
+- Real-time optimizations:
+  - `modelComplexity` có thể giảm để tăng tốc inference khi cần.
+  - `smoothLandmarks` có thể tắt để giảm lag hiển thị (phản hồi nhanh hơn khi người dùng di chuyển tay/chân).
+  - Canvas rendering được schedule bằng `requestAnimationFrame` để tránh vẽ thừa và giảm jitter.
+- Multi-capture flow: thu nhiều captures liên tiếp cùng label; upload không chặn UI/modal.
+
+### 📐 Khuyến nghị thiết lập cho training
+
+- Dynamic actions (ví dụ: walking, running): 10–15 FPS (67–100ms)
+- Static poses (ví dụ: sitting, standing): 5–6 FPS (167–200ms)
+- Gestures (waving, clapping): 15+ FPS (≈67ms)
+
+Chú ý: sampling đều đặn (uniform sampling) giúp model học tốt hơn về đặc trưng thời gian của hành động.
+
+### 🪄 Quick tips — khi capture bị lag hoặc lệch
+
+- Kiểm tra quyền camera trong trình duyệt và đóng ứng dụng khác đang dùng camera.
+- Tăng `frameInterval` để giảm số frame/giây nếu CPU bị quá tải.
+- Tắt smoothing (nếu cần phản hồi real-time, trade-off: landmarks sẽ kém mượt hơn nhưng phản hồi nhanh hơn).
+- Nếu preview đột ngột mất, mở DevTools và kiểm tra logs từ `FullscreenCaptureModal` (có logging frame counts, targetFrames, và progress).
+
+### 🪄 Windows helper script
+
+Có một script PowerShell hỗ trợ tại repo root: `dev.ps1`. Script này giúp chuẩn hoá workflow dev trên Windows:
+
+- Sao chép `.env.example` → `.env` nếu `.env` không tồn tại
+- Cài dependencies nếu `node_modules` chưa có
+- Chạy `npm run dev`, `npm run build`, hoặc `npm run preview`
+
+Sử dụng (PowerShell):
+
+```powershell
+# Start dev server via helper
+.\dev.ps1
+
+# Or via npm script
+npm run dev:win
 ```
 
-### Static File Serving
+### 🧑‍💻 Ghi chú cho developer
 
-The built application in `dist/` can be served by any static file server:
+- `src/components/FullscreenCaptureModal.tsx` là nơi chính cho các logic thu/đếm frame, xử lý multi-capture, và render landmarks.
+- `src/components/CaptureCamera.tsx` quản lý session và trigger modal; upload được thực hiện không chặn UI.
+- `README_ADDITIONS.md` cũng tồn tại nếu bạn muốn mở riêng phần helper nhanh.
 
-- Nginx
-- Apache
-- Vercel
-- Netlify
-- AWS S3 + CloudFront
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### Camera Not Working
-
-```typescript
-// Check browser permissions
-navigator.mediaDevices.getUserMedia({ video: true });
-
-// Verify MediaPipe models loading
-// Check browser console for errors
-```
-
-#### Build Errors
-
-```bash
-# Clear node modules and reinstall
-rm -rf node_modules package-lock.json
-npm install
-
-# Check TypeScript configuration
-npm run type-check
-```
-
-#### API Connection Issues
-
-```typescript
-// Verify backend is running
-curl http://localhost:8000/health
-
-// Check CORS configuration
-// Verify VITE_API_URL in .env
-```
-
-### Performance Optimization
-
-- MediaPipe models are loaded asynchronously
-- Camera streams are properly cleaned up
-- Chunk splitting for large vendor libraries
-- Lazy loading for route-based components
-
-## 📊 Browser Support
-
-- **Chrome/Edge**: Full support with MediaPipe
-- **Firefox**: Full support with MediaPipe
-- **Safari**: WebRTC support, MediaPipe compatibility
-- **Mobile**: Responsive design, touch interactions
-
-## � Security Considerations
-
-- Environment variables for API configuration
-- Client-side data validation
-- Secure file upload handling
-- Camera permission management
-
-## 📈 Performance Metrics
-
-- **Build Size**: ~1.2MB gzipped
-- **Load Time**: <3s on modern browsers
-- **Camera Latency**: <100ms for pose detection
-- **Memory Usage**: Optimized with proper cleanup
-
-This frontend application provides a complete solution for motion capture data collection with professional-grade features, real-time processing, and seamless backend integration.
+---

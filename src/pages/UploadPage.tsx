@@ -13,6 +13,8 @@ export default function UploadPage() {
     "walking", "running", "sitting", "standing", 
     "jumping", "waving", "pointing", "clapping"
   ]);
+  // Feature flag to hide quick label suggestions temporarily
+  const SHOW_QUICK_LABELS = false;
 
   useEffect(() => {
     // Load today's stats from localStorage or API
@@ -117,15 +119,22 @@ export default function UploadPage() {
         </div>
       </div>
 
-      {/* Quick Label Suggestions */}
-      {tab === "camera" && (
+      {/* Quick Label Suggestions (hidden by flag) */}
+      {SHOW_QUICK_LABELS && tab === "camera" && (
         <div className="card">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">🏷️ Quick Label Suggestions</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-gray-700">🏷️ Quick Label Suggestions</h3>
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span>Most used today:</span>
+              <Badge variant="info" size="sm">walking (12)</Badge>
+              <Badge variant="success" size="sm">sitting (8)</Badge>
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2">
             {quickLabels.map((label) => (
               <button
                 key={label}
-                className="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors"
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-full transition-colors relative group"
                 onClick={() => {
                   // This will be handled by the CaptureCamera component
                   const event = new CustomEvent('quickLabel', { detail: label });
@@ -133,8 +142,14 @@ export default function UploadPage() {
                 }}
               >
                 {label}
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  +
+                </span>
               </button>
             ))}
+          </div>
+          <div className="mt-2 text-xs text-gray-500">
+            💡 Click to auto-fill labels for faster data collection
           </div>
         </div>
       )}
