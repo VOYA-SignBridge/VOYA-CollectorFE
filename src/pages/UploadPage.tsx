@@ -25,15 +25,15 @@ export default function UploadPage() {
   return (
     <div className="space-y-6">
       <PageHeader 
-        title="Data Collection Hub" 
-        subtitle="Streamlined workflow for efficient dataset creation"
+        title="Trung tâm Thu thập Dữ liệu" 
+        subtitle="Quy trình gọn nhẹ để tạo bộ dữ liệu hiệu quả"
         actions={
           <div className="flex items-center gap-3">
             <Badge variant="info">
-              📊 Today: {todayStats.samples} samples
+              📊 Hôm nay: {todayStats.samples} mẫu
             </Badge>
             <Badge variant="success">
-              🎯 {todayStats.sessions} sessions
+              🎯 {todayStats.sessions} phiên
             </Badge>
           </div>
         }
@@ -66,11 +66,11 @@ export default function UploadPage() {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Real-time Capture</h3>
-                <p className="text-gray-600 text-sm">Fast, batch collection with instant feedback</p>
+                <h3 className="text-lg font-semibold text-gray-900">Ghi hình trực tiếp</h3>
+                <p className="text-gray-600 text-sm">Thu thập nhanh theo lô với phản hồi tức thì</p>
                 <div className="flex items-center mt-2 space-x-2">
-                  <Badge variant="success" size="sm">⚡ Fastest</Badge>
-                  <Badge variant="info" size="sm">🎯 Batch mode</Badge>
+                  <Badge variant="success" size="sm">⚡ Nhanh nhất</Badge>
+                  <Badge variant="info" size="sm">🎯 Chế độ lô</Badge>
                 </div>
               </div>
             </div>
@@ -100,11 +100,11 @@ export default function UploadPage() {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Video Upload</h3>
-                <p className="text-gray-600 text-sm">Process existing video files</p>
+                <h3 className="text-lg font-semibold text-gray-900">Tải video lên</h3>
+                <p className="text-gray-600 text-sm">Xử lý các tệp video có sẵn</p>
                 <div className="flex items-center mt-2 space-x-2">
-                  <Badge variant="warning" size="sm">📁 File-based</Badge>
-                  <Badge variant="info" size="sm">🔄 Bulk process</Badge>
+                  <Badge variant="warning" size="sm">📁 Dựa trên tệp</Badge>
+                  <Badge variant="info" size="sm">🔄 Xử lý hàng loạt</Badge>
                 </div>
               </div>
             </div>
@@ -123,9 +123,9 @@ export default function UploadPage() {
       {SHOW_QUICK_LABELS && tab === "camera" && (
         <div className="card">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-700">🏷️ Quick Label Suggestions</h3>
+            <h3 className="text-sm font-medium text-gray-700">🏷️ Gợi ý nhãn nhanh</h3>
             <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span>Most used today:</span>
+              <span>Được dùng nhiều hôm nay:</span>
               <Badge variant="info" size="sm">walking (12)</Badge>
               <Badge variant="success" size="sm">sitting (8)</Badge>
             </div>
@@ -149,7 +149,7 @@ export default function UploadPage() {
             ))}
           </div>
           <div className="mt-2 text-xs text-gray-500">
-            💡 Click to auto-fill labels for faster data collection
+            💡 Nhấp để tự động điền nhãn giúp thu dữ liệu nhanh hơn
           </div>
         </div>
       )}
@@ -161,7 +161,7 @@ export default function UploadPage() {
           <div className="card">
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-3 text-gray-600">Loading camera interface...</span>
+              <span className="ml-3 text-gray-600">Đang tải giao diện camera...</span>
             </div>
           </div>
         }>

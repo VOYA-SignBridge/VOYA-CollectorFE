@@ -57,8 +57,6 @@ export interface CameraUploadPayload {
   frames: Array<{
     timestamp: number;
     landmarks: {
-      pose?: MediaPipeLandmark[];
-      face?: MediaPipeLandmark[];
       left_hand?: MediaPipeLandmark[];
       right_hand?: MediaPipeLandmark[];
     };

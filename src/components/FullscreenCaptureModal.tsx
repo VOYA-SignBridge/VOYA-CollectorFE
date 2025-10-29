@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS } from "@mediapipe/holistic";
+import { Hands, HAND_CONNECTIONS } from "@mediapipe/hands";
 import { Camera } from "@mediapipe/camera_utils";
 import * as drawing from "@mediapipe/drawing_utils";
 import Button from "./ui/Button";
@@ -17,8 +17,6 @@ interface FullscreenCaptureModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSampleCapture: (frames: Array<{
-    pose: MediaPipeLandmark[];
-    face: MediaPipeLandmark[];
     left_hand: MediaPipeLandmark[];
     right_hand: MediaPipeLandmark[];
   }>, label: string, user: string, meta?: { camera_info?: CameraInfo; quality_info?: QualityInfo; dialect?: string }) => void;
@@ -44,8 +42,6 @@ export default function FullscreenCaptureModal({
   
   const [recording, setRecording] = useState(false);
   const [frames, setFrames] = useState<Array<{
-    pose: MediaPipeLandmark[];
-    face: MediaPipeLandmark[];
     left_hand: MediaPipeLandmark[];
     right_hand: MediaPipeLandmark[];
   }>>([]);
@@ -61,17 +57,18 @@ export default function FullscreenCaptureModal({
   const [completedCaptures, setCompletedCaptures] = useState(0);
   const [showTips, setShowTips] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  // Small mode state for HUD and behavior introspection
+  const [mode, setMode] = useState<'IDLE' | 'COUNTDOWN' | 'RECORD'>('IDLE');
   // Track whether hands are currently visible to gate frame capture
   const [handsVisible, setHandsVisible] = useState(false);
   
   // Refs to prevent stale closures
   const recordingRef = useRef(false);
   const framesRef = useRef<Array<{
-    pose: MediaPipeLandmark[];
-    face: MediaPipeLandmark[];
     left_hand: MediaPipeLandmark[];
     right_hand: MediaPipeLandmark[];
   }>>([]);
+  const modeRef = useRef<typeof mode>(mode);
   
   // Add frame interval control for better training data
   const lastFrameTimeRef = useRef(0);
@@ -79,25 +76,25 @@ export default function FullscreenCaptureModal({
 
   // Helper to compute lightweight quality metrics for a captured frameset
   const computeQuality = useCallback((capturedFrames: Array<{
-    pose: MediaPipeLandmark[];
-    face: MediaPipeLandmark[];
     left_hand: MediaPipeLandmark[];
     right_hand: MediaPipeLandmark[];
   }>) => {
-    let totalPoseLandmarks = 0;
+    let totalHandLandmarks = 0;
     let framesWithHands = 0;
     let framesAccepted = 0;
     let confidenceSum = 0;
     let confidenceCount = 0;
 
     for (const f of capturedFrames) {
-      const poseCount = (f.pose || []).length;
-      totalPoseLandmarks += poseCount;
-      const hasHands = (f.left_hand && f.left_hand.length > 0) || (f.right_hand && f.right_hand.length > 0);
+      const leftCount = (f.left_hand || []).length;
+      const rightCount = (f.right_hand || []).length;
+      const handCount = leftCount + rightCount;
+      totalHandLandmarks += handCount;
+      const hasHands = handCount > 0;
       if (hasHands) framesWithHands++;
 
       // approximate confidence if landmark has visibility field
-      const landmarks = [...(f.pose || []), ...(f.left_hand || []), ...(f.right_hand || []), ...(f.face || [])];
+      const landmarks = [...(f.left_hand || []), ...(f.right_hand || [])];
       let frameConfSum = 0;
       let frameConfCnt = 0;
       for (const lm of landmarks) {
@@ -110,14 +107,15 @@ export default function FullscreenCaptureModal({
         confidenceSum += frameConfSum;
         confidenceCount += frameConfCnt;
       }
-      // Simple client-side acceptance: require at least 1 pose landmark
-      if (poseCount > 0) framesAccepted++;
+
+      // Acceptance: require at least one hand landmark
+      if (handCount > 0) framesAccepted++;
     }
 
     const quality: QualityInfo = {
       framesCollected: capturedFrames.length,
       framesAccepted,
-      avgPoseLandmarksPerFrame: capturedFrames.length ? totalPoseLandmarks / capturedFrames.length : 0,
+  avgPoseLandmarksPerFrame: capturedFrames.length ? totalHandLandmarks / capturedFrames.length : 0,
       percentFramesWithHands: capturedFrames.length ? (framesWithHands / capturedFrames.length) * 100 : 0,
       confidenceSummary: confidenceCount ? { avg: confidenceSum / confidenceCount } : undefined,
     };
@@ -127,6 +125,11 @@ export default function FullscreenCaptureModal({
   // FIXED_CAPTURE_COUNT and FIXED_TARGET_FRAMES are module-level constants and do not change at runtime.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // keep modeRef in sync for render loop access
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
   
   // Add canvas rendering optimization
   const pendingRenderRef = useRef(false);
@@ -224,18 +227,8 @@ export default function FullscreenCaptureModal({
     }
 
     // Draw landmarks with simplified styling for better performance
-    if (data.poseLandmarks) {
-      drawing.drawConnectors(ctx, data.poseLandmarks, POSE_CONNECTIONS, { 
-        color: "#00FF88", 
-        lineWidth: 2 // Slightly thicker for visibility
-      });
-      drawing.drawLandmarks(ctx, data.poseLandmarks, { 
-        color: "#00FF88", 
-        radius: 4 // Larger for visibility
-      });
-    }
-    
     if (data.leftHandLandmarks) {
+      // @ts-expect-error - HAND_CONNECTIONS types from mediapipe are not available in this project
       drawing.drawConnectors(ctx, data.leftHandLandmarks, HAND_CONNECTIONS, { 
         color: "#FF6B35", 
         lineWidth: 2 
@@ -247,6 +240,7 @@ export default function FullscreenCaptureModal({
     }
     
     if (data.rightHandLandmarks) {
+      // @ts-expect-error - HAND_CONNECTIONS types from mediapipe are not available in this project
       drawing.drawConnectors(ctx, data.rightHandLandmarks, HAND_CONNECTIONS, { 
         color: "#4ECDC4", 
         lineWidth: 2 
@@ -255,6 +249,51 @@ export default function FullscreenCaptureModal({
         color: "#4ECDC4", 
         radius: 5 
       });
+    }
+
+    // Draw HUD (MODE / HANDS / FRAMES) top-left
+    try {
+      const hudPadding = 8;
+      const lines = [
+        `MODE: ${modeRef.current}`,
+        `HANDS: ${((data.leftHandLandmarks?.length ?? 0) > 0 ? 1 : 0) + ((data.rightHandLandmarks?.length ?? 0) > 0 ? 1 : 0)}`,
+        `FRAMES: ${framesRef.current.length}/${targetFramesRef.current}`
+      ];
+      ctx.save();
+      ctx.font = '14px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
+      ctx.textBaseline = 'top';
+      let maxW = 0;
+      for (const l of lines) {
+        const m = ctx.measureText(l).width;
+        if (m > maxW) maxW = m;
+      }
+      const boxW = Math.ceil(maxW + hudPadding * 2);
+      const boxH = Math.ceil(lines.length * 18 + hudPadding * 2);
+
+      // background
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      const rx = 12, ry = 12;
+      const x = 12, y = 12;
+      // Rounded rect
+      ctx.beginPath();
+      ctx.moveTo(x + rx, y);
+      ctx.arcTo(x + boxW, y, x + boxW, y + boxH, ry);
+      ctx.arcTo(x + boxW, y + boxH, x, y + boxH, rx);
+      ctx.arcTo(x, y + boxH, x, y, ry);
+      ctx.arcTo(x, y, x + boxW, y, rx);
+      ctx.closePath();
+      ctx.fill();
+
+      // text
+      ctx.fillStyle = '#fff';
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], x + hudPadding, y + hudPadding + i * 18);
+      }
+      ctx.restore();
+    } catch (e) {
+      // guard - HUD drawing must not break main render
+      // eslint-disable-next-line no-console
+      console.warn('HUD draw failed', e);
     }
     
     pendingRenderRef.current = false;
@@ -276,7 +315,8 @@ export default function FullscreenCaptureModal({
       if (!ok) return;
     }
 
-    setRecording(false);
+  setRecording(false);
+  setMode('IDLE');
     setFrames([]);
     setCountdown(0);
     setIsReady(false);
@@ -424,14 +464,16 @@ export default function FullscreenCaptureModal({
     // Reset frame timing
     lastFrameTimeRef.current = 0;
     
-    setCountdown(3);
+  setCountdown(3);
+  setMode('COUNTDOWN');
     
   console.log(`Starting capture sequence: ${FIXED_CAPTURE_COUNT} captures of ${FIXED_TARGET_FRAMES} frames each`);
     
     setTimeout(() => {
-          setRecording(true);
-          recordingRef.current = true;
-          lastFrameTimeRef.current = Date.now(); // Start timing from recording start
+      setRecording(true);
+      recordingRef.current = true;
+      setMode('RECORD');
+      lastFrameTimeRef.current = Date.now(); // Start timing from recording start
     }, 3000);
   // FIXED_CAPTURE_COUNT and FIXED_TARGET_FRAMES are stable module constants and
   // intentionally omitted from dependencies to avoid unnecessary re-creations.
@@ -461,154 +503,138 @@ export default function FullscreenCaptureModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    console.log('Setting up camera and MediaPipe...');
+    console.log('Setting up camera and MediaPipe Hands...');
 
-    const holistic = new Holistic({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
+    const hands = new Hands({
+      locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
     });
 
-    holistic.setOptions({
-      modelComplexity: 0, // Reduce from 1 to 0 for faster processing
-      smoothLandmarks: false, // Disable smoothing for real-time responsiveness
-      refineFaceLandmarks: false,
-      enableSegmentation: false, // Disable segmentation for better performance
-      smoothSegmentation: false,
-      minDetectionConfidence: 0.7, // Increase detection threshold
-      minTrackingConfidence: 0.7, // Increase tracking threshold
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 0,
+      refineLandmarks: false,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
     });
 
-    console.log('MediaPipe Holistic initialized');
+    console.log('MediaPipe Hands initialized');
 
-    holistic.onResults((results) => {
-      // For rendering use a low-latency lerp of raw landmarks (keeps UI responsive)
-      const renderPose = getRenderLandmarks(results.poseLandmarks, 'pose');
-      const renderLeft = getRenderLandmarks(results.leftHandLandmarks, 'leftHand');
-      const renderRight = getRenderLandmarks(results.rightHandLandmarks, 'rightHand');
+    hands.onResults((results: unknown) => {
+      const r = results as { multiHandLandmarks?: MediaPipeLandmark[][]; multiHandedness?: Array<{ label?: string }>; image?: HTMLImageElement | HTMLVideoElement };
+      // Map multi-hand landmarks to left/right by using multiHandedness
+      let leftHandLandmarks: MediaPipeLandmark[] | undefined = undefined;
+      let rightHandLandmarks: MediaPipeLandmark[] | undefined = undefined;
+      if (r.multiHandLandmarks && r.multiHandedness) {
+        for (let i = 0; i < r.multiHandLandmarks.length; i++) {
+          const lm = r.multiHandLandmarks[i];
+          const handedness = r.multiHandedness[i];
+          const label = handedness?.label;
+          if (label === 'Left') leftHandLandmarks = lm as MediaPipeLandmark[];
+          else if (label === 'Right') rightHandLandmarks = lm as MediaPipeLandmark[];
+        }
+      }
 
-      // Store render data and schedule optimized rendering (render uses lerped landmarks)
+      const renderLeft = getRenderLandmarks(leftHandLandmarks, 'leftHand');
+      const renderRight = getRenderLandmarks(rightHandLandmarks, 'rightHand');
+
       renderDataRef.current = {
-        poseLandmarks: renderPose,
         leftHandLandmarks: renderLeft,
         rightHandLandmarks: renderRight,
-        image: results.image as HTMLImageElement | HTMLVideoElement
+        image: r.image as HTMLImageElement | HTMLVideoElement
       };
-      
-      // Use RAF for smooth rendering
+
       if (!pendingRenderRef.current) {
         pendingRenderRef.current = true;
         requestAnimationFrame(renderLandmarks);
       }
 
-      // Process frame capture directly here to avoid dependency issues
+      // Capture logic (hands-only)
       if (recordingRef.current) {
         const currentTime = Date.now();
-        
-        // Check if enough time has passed since last frame capture
-        if (currentTime - lastFrameTimeRef.current < frameIntervalMs.current) {
-          return; // Skip this frame to maintain consistent interval
-        }
-        
+        if (currentTime - lastFrameTimeRef.current < frameIntervalMs.current) return;
         lastFrameTimeRef.current = currentTime;
-        console.log(`Capturing frame at ${currentTime}, interval: ${frameIntervalMs.current}ms`);
-        
-          // Determine if hands are visible using visibility or presence
-          const leftHas = (results.leftHandLandmarks && results.leftHandLandmarks.length > 0);
-          const rightHas = (results.rightHandLandmarks && results.rightHandLandmarks.length > 0);
 
-          // If visibility field exists, require at least one landmark with visibility >= 0.5
-          let leftVisible = false;
-          let rightVisible = false;
-          if (results.leftHandLandmarks) {
-            leftVisible = results.leftHandLandmarks.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
-          }
-          if (results.rightHandLandmarks) {
-            rightVisible = results.rightHandLandmarks.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
-          }
+        const leftHas = (leftHandLandmarks?.length ?? 0) > 0;
+        const rightHas = (rightHandLandmarks?.length ?? 0) > 0;
 
-          const anyHands = leftHas || rightHas;
-          const anyVisible = leftVisible || rightVisible;
+        let leftVisible = false;
+        let rightVisible = false;
+        if (leftHandLandmarks) leftVisible = leftHandLandmarks.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
+        if (rightHandLandmarks) rightVisible = rightHandLandmarks.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
 
-          // Update UI hint
-          setHandsVisible(anyVisible || anyHands);
+        const anyHands = leftHas || rightHas;
+        const anyVisible = leftVisible || rightVisible;
 
-          // Only capture frames when a hand is present/visible
-          if (!(anyVisible || anyHands)) {
-            // Skip storing this frame
-            console.log('Skipping frame: no hands detected');
-          } else {
-            const landmarks = {
-              pose: filterLandmarks(results.poseLandmarks, 'pose') || [],
-              face: results.faceLandmarks || [],
-              left_hand: filterLandmarks(results.leftHandLandmarks, 'leftHand') || [],
-              right_hand: filterLandmarks(results.rightHandLandmarks, 'rightHand') || [],
-            };
+        setHandsVisible(Boolean(anyVisible || anyHands));
 
-            // Directly update refs without causing state updates during recording
-            framesRef.current.push(landmarks);
-          }
-        
-        // Update UI every frame (smoother feedback for training)
+        if (!(anyVisible || anyHands)) {
+          console.log('Skipping frame: no hands detected');
+        } else {
+          const landmarks = {
+            left_hand: filterLandmarks(leftHandLandmarks, 'leftHand') || [],
+            right_hand: filterLandmarks(rightHandLandmarks, 'rightHand') || [],
+          };
+
+          framesRef.current.push(landmarks);
+        }
+
         setFrames([...framesRef.current]);
-        
-        // Debug current progress
         console.log(`Recording progress: ${framesRef.current.length}/${targetFramesRef.current} frames`);
-        
-        // Check if target reached
-        console.log(`Frame check: ${framesRef.current.length} >= ${FIXED_TARGET_FRAMES}?`, framesRef.current.length >= FIXED_TARGET_FRAMES);
+
         if (framesRef.current.length >= FIXED_TARGET_FRAMES) {
           console.log('Target frames reached, stopping recording');
           recordingRef.current = false;
           setRecording(false);
-          
-          // Process current capture
-          const capturedFrames = [...framesRef.current];
+          setMode('IDLE');
 
-          // Compute lightweight quality metrics for this capture
+          const capturedFrames = [...framesRef.current];
           const quality = computeQuality(capturedFrames);
           const newCompleted = completedCapturesRef.current + 1;
-          
+
           console.log(`Capture ${newCompleted} completed with ${capturedFrames.length} frames`);
-          
-          // Send capture data immediately
           onSampleCaptureRef.current(capturedFrames, labelRef.current, userRef.current, { quality_info: quality, dialect: dialectRef.current });
-          
-          // Update completed count
+
           completedCapturesRef.current = newCompleted;
           setCompletedCaptures(newCompleted);
           setCurrentCaptureIndex(newCompleted);
-          
-          console.log('Current capture stats:', {
-            newCompleted,
-            captureCountRefCurrent: captureCountRef.current,
-            shouldContinue: newCompleted < captureCountRef.current
-          });
-          
+
           if (newCompleted < FIXED_CAPTURE_COUNT) {
-            // More captures needed - reset for next capture
             console.log(`Preparing capture ${newCompleted + 1} of ${FIXED_CAPTURE_COUNT}`);
             setFrames([]);
             framesRef.current = [];
-            
-            // Reset frame timing for next capture
             lastFrameTimeRef.current = 0;
-            
-            // Auto-start next capture after 2 seconds
             setTimeout(() => {
-              console.log(`Starting countdown for capture ${newCompleted + 1}`);
               setCountdown(3);
+              setMode('COUNTDOWN');
               setTimeout(() => {
-                console.log(`Recording capture ${newCompleted + 1}`);
                 setRecording(true);
                 recordingRef.current = true;
-                lastFrameTimeRef.current = Date.now(); // Start timing for new capture
+                setMode('RECORD');
+                lastFrameTimeRef.current = Date.now();
               }, 3000);
             }, 2000);
           } else {
-            // All captures completed, close modal
-            console.log(`All ${newCompleted} captures completed, closing modal`);
+            // Final capture completed. Keep the modal open, clear frames and
+            // reset only the action label so the user can start a new capture
+            // while preserving the same user ID.
             setTimeout(() => {
-              console.log('Attempting to close modal');
-              handleCloseRef.current?.();
+              // clear captured frames and reset timing
+              setFrames([]);
+              framesRef.current = [];
+              lastFrameTimeRef.current = 0;
+
+              // reset capture counters so UI shows ready state
+              completedCapturesRef.current = 0;
+              setCompletedCaptures(0);
+              setCurrentCaptureIndex(0);
+
+              // stop recording and set idle mode
+              recordingRef.current = false;
+              setRecording(false);
+              setMode('IDLE');
+
+              // clear the action label but keep the user id
+              setLabel('');
             }, 1000);
           }
         }
@@ -664,10 +690,10 @@ export default function FullscreenCaptureModal({
           stream.getTracks().forEach(track => track.stop());
           
           // Now create the MediaPipe camera
-          const camera = new Camera(videoRef.current!, {
+      const camera = new Camera(videoRef.current!, {
             onFrame: async () => {
               if (videoRef.current) {
-                await holistic.send({ image: videoRef.current });
+                await hands.send({ image: videoRef.current });
               }
             },
             width: 1280,
@@ -699,7 +725,7 @@ export default function FullscreenCaptureModal({
       return () => {
         video.removeEventListener('loadedmetadata', onLoadedMetadata);
         video.removeEventListener('canplay', onCanPlay);
-        holistic.close();
+        hands.close();
         if (cameraRef.current) {
           cameraRef.current.stop();
           cameraRef.current = null;
@@ -708,7 +734,7 @@ export default function FullscreenCaptureModal({
     }
 
     return () => {
-      holistic.close();
+      hands.close();
       if (cameraRef.current) {
         cameraRef.current.stop();
         cameraRef.current = null;
@@ -780,12 +806,14 @@ export default function FullscreenCaptureModal({
           setCompletedCaptures(0);
           completedCapturesRef.current = 0;
           setCountdown(3);
+          setMode('COUNTDOWN');
           
           console.log(`Starting capture sequence: ${captureCountRef.current} captures of ${targetFramesRef.current} frames each`);
           
           setTimeout(() => {
             setRecording(true);
             recordingRef.current = true;
+            setMode('RECORD');
           }, 3000);
         } else if (recordingRef.current) {
           // Inline stop logic — enforce target frames before allowing stop
@@ -808,6 +836,21 @@ export default function FullscreenCaptureModal({
       } else if (e.code === 'Escape') {
         console.log('Escape pressed - closing modal');
         handleCloseRef.current?.();
+      } else if (e.code === 'KeyS') {
+        // toggle guide
+        setShowGuide((s) => !s);
+      } else if (e.code === 'KeyD') {
+        // toggle tips
+        setShowTips((s) => !s);
+      } else if (e.code === 'KeyA') {
+        // abort/stop current recording and discard partial frames
+        if (recordingRef.current) {
+          recordingRef.current = false;
+          setRecording(false);
+          setFrames([]);
+          framesRef.current = [];
+          setMode('IDLE');
+        }
       }
     };
 
@@ -825,25 +868,25 @@ export default function FullscreenCaptureModal({
       <div className="absolute top-0 left-0 right-0 z-10 bg-black/80 backdrop-blur-sm border-b border-gray-700">
         <div className="flex items-center justify-between px-6 py-4">
           <div className="flex items-center space-x-4">
-            <h2 className="text-xl font-semibold text-white">🎬 Fullscreen Capture</h2>
+            <h2 className="text-xl font-semibold text-white">🎬 Ghi toàn màn hình</h2>
             {isReady && (
               <Badge variant="success">
                 <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-2"></span>
-                Camera Ready
+                Camera sẵn sàng
               </Badge>
             )}
           </div>
           
           <div className="flex items-center space-x-4">
             <div className="text-white text-sm">
-              Press <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">Enter</kbd> to capture • <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">Esc</kbd> to exit
+              Nhấn <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">Enter</kbd> để chụp • <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">Esc</kbd> để thoát
             </div>
             <button
               onClick={() => setShowGuide(!showGuide)}
               className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center space-x-2"
             >
               <span>{showGuide ? '🙈' : '👁️'}</span>
-              <span>{showGuide ? 'Hide Guide' : 'Show Guide'}</span>
+              <span>{showGuide ? 'Ẩn hướng dẫn' : 'Hiển thị hướng dẫn'}</span>
             </button>
             <button
               onClick={handleClose}
@@ -910,12 +953,12 @@ export default function FullscreenCaptureModal({
                 
                 {/* Minimal instruction */}
                 <div className="absolute -top-12 left-1/2 transform -translate-x-1/2 bg-gray-800/80 backdrop-blur-sm text-white px-4 py-2 rounded-lg text-sm font-medium">
-                  🎯 Position yourself in frame
+                  🎯 Đặt vị trí vào khung
                 </div>
                 
                 {/* Quality tip */}
                 <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-800/70 backdrop-blur-sm text-white px-3 py-1 rounded-lg text-xs">
-                  Upper body + hands visible
+                  Thấy phần trên cơ thể và hai tay
                 </div>
               </div>
             </div>
@@ -926,11 +969,11 @@ export default function FullscreenCaptureModal({
             <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm">
               <div className="text-center text-white">
                 <div className="text-8xl font-bold mb-4 animate-pulse">{countdown}</div>
-                <div className="text-2xl mb-2">Get ready to perform:</div>
+                <div className="text-2xl mb-2">Chuẩn bị thực hiện:</div>
                 <div className="text-3xl font-semibold text-green-400">{label}</div>
                 {captureCount > 1 && (
                   <div className="text-lg mt-4 text-gray-300">
-                    Capture {currentCaptureIndex + 1} of {FIXED_CAPTURE_COUNT}
+                    Lần chụp {currentCaptureIndex + 1} / {FIXED_CAPTURE_COUNT}
                   </div>
                 )}
               </div>
@@ -942,10 +985,10 @@ export default function FullscreenCaptureModal({
             <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm">
               <div className="text-center text-white">
                 <div className="text-4xl mb-4">🎉</div>
-                <div className="text-2xl font-bold mb-2 text-green-400">Capture {completedCaptures} Complete!</div>
-                <div className="text-xl mb-4">Preparing next capture...</div>
+                <div className="text-2xl font-bold mb-2 text-green-400">Đã chụp {completedCaptures} mẫu!</div>
+                <div className="text-xl mb-4">Chuẩn bị chụp tiếp...</div>
                 <div className="text-lg text-gray-300">
-                  Progress: {completedCaptures} / {FIXED_CAPTURE_COUNT}
+                  Tiến độ: {completedCaptures} / {FIXED_CAPTURE_COUNT}
                 </div>
                 <div className="w-64 bg-gray-700 rounded-full h-3 mt-4 mx-auto">
                   <div 
@@ -962,9 +1005,9 @@ export default function FullscreenCaptureModal({
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
               <div className="text-center text-white">
                 <div className="text-6xl mb-4">✅</div>
-                <div className="text-3xl font-bold mb-2 text-green-400">All Captures Complete!</div>
-                <div className="text-xl mb-4">{completedCaptures} samples of "{label}" captured</div>
-                <div className="text-lg text-gray-300">Closing modal...</div>
+                <div className="text-3xl font-bold mb-2 text-green-400">Hoàn tất tất cả lần chụp!</div>
+                <div className="text-xl mb-4">Đã chụp {completedCaptures} mẫu cho "{label}"</div>
+                <div className="text-lg text-gray-300">Sẵn sàng chụp tiếp — nhập nhãn mới và nhấn nút Bắt đầu chụp</div>
               </div>
             </div>
           )}
@@ -973,7 +1016,7 @@ export default function FullscreenCaptureModal({
           {recording && (
             <div className="absolute top-24 left-6 flex items-center space-x-3 bg-red-500 text-white px-4 py-2 rounded-full shadow-lg">
               <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
-              <span className="font-medium">RECORDING</span>
+              <span className="font-medium">ĐANG GHI</span>
               {FIXED_CAPTURE_COUNT > 1 && (
                 <span className="text-sm">({completedCaptures + 1}/{FIXED_CAPTURE_COUNT})</span>
               )}
@@ -984,7 +1027,7 @@ export default function FullscreenCaptureModal({
           {recording && (
             <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-black/50 backdrop-blur-sm rounded-full px-6 py-2">
               <div className="text-white text-sm">
-                📊 {frames.length} frames captured
+                📊 {frames.length} khung đã chụp
               </div>
             </div>
           )}
@@ -997,42 +1040,42 @@ export default function FullscreenCaptureModal({
             <div className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 rounded-xl p-5 border border-blue-500/20">
               <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
                 <span className="w-3 h-3 bg-blue-400 rounded-full mr-3"></span>
-                Capture Setup
+                Cài đặt chụp
               </h3>
               
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-blue-300 mb-2">📝 Action Label *</label>
+                  <label className="block text-sm font-medium text-blue-300 mb-2">📝 Nhãn hành động *</label>
                   <input
                     type="text"
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
-                    placeholder="e.g., walking, jumping, waving"
+                    placeholder="ví dụ: đi bộ, nhảy, vẫy tay"
                     className="w-full px-4 py-3 bg-gray-800/80 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     disabled={recording || countdown > 0}
                   />
                   {!label && (
-                    <p className="text-xs text-yellow-400 mt-1">⚠️ Action label is required</p>
+                    <p className="text-xs text-yellow-400 mt-1">⚠️ Nhãn hành động là bắt buộc</p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-blue-300 mb-2">👤 User ID *</label>
+                  <label className="block text-sm font-medium text-blue-300 mb-2">👤 Người thực hiện *</label>
                   <input
                     type="text"
                     value={user}
                     onChange={(e) => setUser(e.target.value)}
-                    placeholder="e.g., user001, john_doe"
+                    placeholder="ví dụ: user001, john_doe"
                     className="w-full px-4 py-3 bg-gray-800/80 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     disabled={recording || countdown > 0}
                   />
                   {!user && (
-                    <p className="text-xs text-yellow-400 mt-1">⚠️ User ID is required</p>
+                    <p className="text-xs text-yellow-400 mt-1">⚠️ ID người dùng là bắt buộc</p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-blue-300 mb-2">🗂️ Bộ ngôn ngữ (Dialect)</label>
+                  <label className="block text-sm font-medium text-blue-300 mb-2">🗂️ Bộ ngôn ngữ</label>
                   <select
                     value={dialect}
                     onChange={(e) => {
@@ -1067,23 +1110,23 @@ export default function FullscreenCaptureModal({
 
             {/* Recording Stats */}
             <div className="bg-gray-800 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-300 mb-3">📊 Capture Settings & Progress</h4>
+              <h4 className="text-sm font-medium text-gray-300 mb-3">📊 Cài đặt & Tiến độ chụp</h4>
               <div className="space-y-2 text-sm">
                 {/* Capture settings removed for simplified public uploader; defaults are enforced. */}
                 <div className="flex justify-between text-gray-400">
-                  <span>Total captures:</span>
+                  <span>Tổng số lần chụp:</span>
                   <span className="text-white">{FIXED_CAPTURE_COUNT}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Current capture:</span>
+                  <span>Lần chụp hiện tại:</span>
                   <span className="text-white">{currentCaptureIndex + 1}/{FIXED_CAPTURE_COUNT}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Completed:</span>
+                  <span>Đã hoàn thành:</span>
                   <span className="text-white">{completedCaptures}/{FIXED_CAPTURE_COUNT}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Current frames:</span>
+                  <span>Khung hiện tại:</span>
                   <span className="text-white">{frames.length}/{FIXED_TARGET_FRAMES}</span>
                 </div>
                 {frames.length > 0 && (
@@ -1095,9 +1138,9 @@ export default function FullscreenCaptureModal({
                   </div>
                 )}
                 <div className="flex justify-between text-gray-400">
-                  <span>Status:</span>
+                  <span>Trạng thái:</span>
                   <Badge variant={recording ? "danger" : isReady ? "success" : "warning"} size="sm">
-                    {recording ? "Recording" : isReady ? "Ready" : "Loading"}
+                    {recording ? "Đang ghi" : isReady ? "Sẵn sàng" : "Đang tải"}
                   </Badge>
                 </div>
               </div>
@@ -1108,7 +1151,7 @@ export default function FullscreenCaptureModal({
           <div className="p-6 border-t border-gray-700 space-y-3">
             {countdown > 0 ? (
               <div className="w-full py-4 bg-yellow-600 text-white rounded-lg text-center font-medium">
-                Starting in {countdown}...
+                Bắt đầu sau {countdown}...
               </div>
             ) : !recording ? (
               <Button
@@ -1120,7 +1163,7 @@ export default function FullscreenCaptureModal({
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
-                {FIXED_CAPTURE_COUNT > 1 ? `Start Captures (${FIXED_CAPTURE_COUNT}x)` : 'Start Capture'} (Enter)
+                {FIXED_CAPTURE_COUNT > 1 ? `Bắt đầu chụp (${FIXED_CAPTURE_COUNT}x)` : 'Bắt đầu chụp'} (Enter)
               </Button>
             ) : (
               <Button
@@ -1128,13 +1171,13 @@ export default function FullscreenCaptureModal({
                 className="w-full py-4 text-lg font-medium"
                 variant="danger"
                 disabled={frames.length < FIXED_TARGET_FRAMES}
-                title={frames.length < FIXED_TARGET_FRAMES ? `Need ${FIXED_TARGET_FRAMES} frames before stopping` : undefined}
+                title={frames.length < FIXED_TARGET_FRAMES ? `Cần ${FIXED_TARGET_FRAMES} khung trước khi dừng` : undefined}
               >
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6v6H9z" />
                 </svg>
-                Stop Recording
+                Dừng ghi
               </Button>
             )}
             
@@ -1143,7 +1186,7 @@ export default function FullscreenCaptureModal({
               className="w-full"
               variant="secondary"
             >
-              Exit Fullscreen
+              Thoát toàn màn hình
             </Button>
           </div>
 
@@ -1153,18 +1196,18 @@ export default function FullscreenCaptureModal({
               onClick={() => setShowTips(!showTips)}
               className="w-full flex items-center justify-between text-sm font-medium text-gray-300 hover:text-white transition-colors"
             >
-              <span>💡 Quick Tips for Best Results</span>
+              <span>💡 Mẹo nhanh để có kết quả tốt</span>
               <span className="text-xs">{showTips ? '🔽' : '▶️'}</span>
             </button>
             
             {showTips && (
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-400">
-                <div>✨ Ensure good lighting and clear background</div>
-                <div>🤲 Keep hands visible and fingers extended</div>
-                <div>👁️ Use "Show Guide" button for positioning help</div>
-                <div>🔗 Watch hand connections for better tracking</div>
-                <div>🎯 Stay centered in the camera view</div>
-                <div>⚡ Move naturally for best results</div>
+                <div>✨ Đảm bảo ánh sáng tốt và nền rõ ràng</div>
+                <div>🤲 Giữ tay hiển thị và ngón tay duỗi</div>
+                <div>👁️ Dùng nút "Hiển thị hướng dẫn" để hỗ trợ định vị</div>
+                <div>🔗 Quan sát kết nối giữa các bộ phận tay để theo dõi tốt hơn</div>
+                <div>🎯 Giữ ở giữa khung hình</div>
+                <div>⚡ Di chuyển tự nhiên để có kết quả tốt nhất</div>
               </div>
             )}
           </div>

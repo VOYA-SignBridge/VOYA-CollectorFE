@@ -35,7 +35,7 @@ export default function UploadVideoForm({ onError }: Props) {
 
   const handleUpload = async () => {
     if (!file || !label || !user) {
-      onError?.("Please fill in all required fields");
+      onError?.("Vui lòng điền đầy đủ các trường bắt buộc");
       return;
     }
     setLoading(true);
@@ -44,18 +44,18 @@ export default function UploadVideoForm({ onError }: Props) {
       if (res.ok) {
         setResult({
           success: true,
-          message: "Upload successful!",
+          message: "Video đã được tải lên và xử lý thành công!",
           data: res.data
         });
         setFile(null);
         setLabel("");
         setUser("");
       } else {
-        onError?.(res.error || "Upload failed. Please try again.");
+        onError?.(res.error || "Tải lên thất bại. Vui lòng thử lại.");
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      onError?.(msg || "Upload failed");
+      onError?.(msg || "Tải lên thất bại");
     } finally {
       setLoading(false);
     }
@@ -114,15 +114,15 @@ export default function UploadVideoForm({ onError }: Props) {
           </svg>
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Upload Video File</h2>
-          <p className="text-gray-600 text-sm">Upload a video file to extract pose data for your dataset</p>
+          <h2 className="text-xl font-semibold text-gray-900">Tải video lên</h2>
+          <p className="text-gray-600 text-sm">Tải một tệp video để trích xuất dữ liệu bàn tay cho bộ dữ liệu của bạn</p>
         </div>
       </div>
 
       <div className="space-y-6">
         {/* File Upload Area */}
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Video File *</label>
+          <label className="block text-sm font-medium text-gray-700">Tệp video *</label>
           <div
             className={
               `relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ` +
@@ -160,7 +160,7 @@ export default function UploadVideoForm({ onError }: Props) {
                   }}
                   className="text-xs text-red-600 hover:text-red-700 underline"
                 >
-                  Remove file
+                  Xóa tệp
                 </button>
               </div>
             ) : (
@@ -171,11 +171,11 @@ export default function UploadVideoForm({ onError }: Props) {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-gray-600 font-medium">Drag and drop your video file here</p>
-                  <p className="text-gray-400 text-sm mt-1">or click to browse files</p>
+                  <p className="text-gray-600 font-medium">Kéo thả tệp video vào đây</p>
+                  <p className="text-gray-400 text-sm mt-1">hoặc nhấp để chọn tệp</p>
                 </div>
                 <div className="text-xs text-gray-400">
-                  Supported formats: MP4, AVI, MOV, WMV • Max size: 100MB
+                  Định dạng hỗ trợ: MP4, AVI, MOV, WMV • Kích thước tối đa: 100MB
                 </div>
               </div>
             )}
@@ -185,31 +185,31 @@ export default function UploadVideoForm({ onError }: Props) {
         {/* Form Fields */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">Label *</label>
+            <label className="block text-sm font-medium text-gray-700">Nhãn (Label) *</label>
             <input
               className="input"
-              placeholder="e.g., walking, sitting, jumping"
+              placeholder="ví dụ: đi bộ, ngồi, nhảy"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               disabled={loading}
             />
-            <p className="text-xs text-gray-500">Describe the action or pose in the video</p>
+            <p className="text-xs text-gray-500">Mô tả hành động hoặc tư thế trong video</p>
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">User ID *</label>
+            <label className="block text-sm font-medium text-gray-700">Mã người dùng (User ID) *</label>
             <input
               className="input"
-              placeholder="e.g., user001, john_doe"
+              placeholder="ví dụ: user001, john_doe"
               value={user}
               onChange={(e) => setUser(e.target.value)}
               disabled={loading}
             />
-            <p className="text-xs text-gray-500">Unique identifier for the person in the video</p>
+            <p className="text-xs text-gray-500">Mã định danh duy nhất cho người trong video</p>
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">Bộ ngôn ngữ (Dialect)</label>
+            <label className="block text-sm font-medium text-gray-700">Bộ ngôn ngữ</label>
             <select
               value={dialect}
               onChange={(e) => {
@@ -241,7 +241,7 @@ export default function UploadVideoForm({ onError }: Props) {
         {/* Upload Button */}
         <div className="flex items-center justify-between pt-4 border-t border-gray-200">
           <div className="text-sm text-gray-500">
-            All fields marked with * are required
+            Các trường có dấu * là bắt buộc
           </div>
           <Button 
             onClick={handleUpload} 
@@ -249,28 +249,58 @@ export default function UploadVideoForm({ onError }: Props) {
             disabled={!file || !label || !user || loading}
             className="px-8"
           >
-            {loading ? 'Processing...' : 'Upload & Process'}
+            {loading ? 'Đang xử lý...' : 'Tải lên & Xử lý'}
           </Button>
         </div>
 
         {/* Upload Result */}
         {result && (
-          <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-xl">
+          <div className="mt-6 p-6 bg-green-50 border border-green-200 rounded-xl">
             <div className="flex items-start">
-              <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center mr-3 mt-0.5">
-                <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-4 mt-0.5">
+                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
               <div className="flex-1">
-                <h4 className="text-sm font-medium text-green-900 mb-2">
-                  {result.message || "Upload Successful!"}
+                <h4 className="text-lg font-semibold text-green-900 mb-2">
+                  🎉 Tải lên thành công!
                 </h4>
-                {result.data && (
-                  <pre className="text-xs text-green-700 bg-green-100 p-3 rounded-lg overflow-auto">
-                    {JSON.stringify(result.data, null, 2)}
-                  </pre>
-                )}
+                <div className="space-y-3">
+                  <div className="text-sm text-green-800">
+                    Video của bạn đã được xử lý và lưu vào hệ thống. Dữ liệu bàn tay đã được trích xuất thành công.
+                  </div>
+                  
+                  {result.data && (
+                    <div className="bg-white bg-opacity-70 rounded-lg p-4 border border-green-200">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="font-medium text-gray-700">ID mẫu:</span>
+                          <span className="ml-2 text-gray-900">{result.data.id || 'Đã tạo'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-700">Trạng thái:</span>
+                          <span className="ml-2 text-green-700 font-medium">Đã xử lý</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-700">Nhãn:</span>
+                          <span className="ml-2 text-gray-900">{label}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-700">Bộ ngôn ngữ:</span>
+                          <span className="ml-2 text-gray-900">{dialect}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="flex items-center text-sm text-green-700">
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Bạn có thể tiếp tục tải lên video khác hoặc chuyển sang ghi trực tiếp.
+                  </div>
+                </div>
               </div>
             </div>
           </div>
