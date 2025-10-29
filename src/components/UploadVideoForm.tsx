@@ -6,6 +6,9 @@ type UploadResult = {
   success: boolean;
   message?: string;
   data?: Record<string, unknown>;
+  uploadedLabel?: string;
+  uploadedUser?: string;
+  uploadedDialect?: string;
 };
 
 type Props = {
@@ -39,13 +42,22 @@ export default function UploadVideoForm({ onError }: Props) {
       return;
     }
     setLoading(true);
+    
+    // Lưu lại các giá trị trước khi reset để hiển thị trong thông báo
+    const uploadedLabel = label;
+    const uploadedUser = user;
+    const uploadedDialect = dialect;
+    
     try {
       const res = await uploadVideo(file, user, label, dialect);
       if (res.ok) {
         setResult({
           success: true,
           message: "Video đã được tải lên và xử lý thành công!",
-          data: res.data
+          data: res.data,
+          uploadedLabel,
+          uploadedUser,
+          uploadedDialect
         });
         setFile(null);
         setLabel("");
@@ -276,7 +288,9 @@ export default function UploadVideoForm({ onError }: Props) {
                       <div className="grid grid-cols-2 gap-4 text-sm">
                         <div>
                           <span className="font-medium text-gray-700">ID mẫu:</span>
-                          <span className="ml-2 text-gray-900">{result.data.id || 'Đã tạo'}</span>
+                          <span className="ml-2 text-gray-900">
+                            {(result.data as { id?: string | number }).id?.toString() || 'Đã tạo'}
+                          </span>
                         </div>
                         <div>
                           <span className="font-medium text-gray-700">Trạng thái:</span>
@@ -284,11 +298,11 @@ export default function UploadVideoForm({ onError }: Props) {
                         </div>
                         <div>
                           <span className="font-medium text-gray-700">Nhãn:</span>
-                          <span className="ml-2 text-gray-900">{label}</span>
+                          <span className="ml-2 text-gray-900">{result.uploadedLabel}</span>
                         </div>
                         <div>
                           <span className="font-medium text-gray-700">Bộ ngôn ngữ:</span>
-                          <span className="ml-2 text-gray-900">{dialect}</span>
+                          <span className="ml-2 text-gray-900">{result.uploadedDialect}</span>
                         </div>
                       </div>
                     </div>
