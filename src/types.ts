@@ -97,6 +97,42 @@ export interface Session {
   created_at: string;
 }
 
+// New types for classes API (BE modern endpoints)
+export interface ClassRow {
+  class_uid: string;
+  class_idx: number | string; // BE returns string (sometimes empty ""), FE will normalize
+  slug: string;
+  label_original: string;
+  language?: string;
+  dialect?: string;
+  is_common_global?: boolean | string; // BE returns "0"/"1" strings
+  is_common_language?: boolean | string; // BE returns "0"/"1" strings
+  folder_name?: string;
+  created_at?: string;
+  migrated_at?: string | null;
+}
+
+export interface ClassesListResponse {
+  count: number;
+  items: ClassRow[];
+}
+
+export interface ClassStatsRow {
+  class_uid: string;
+  class_idx?: number;
+  slug?: string;
+  label_original?: string;
+  // Backend uses `count` for samples; keep `samples_count` as legacy alias
+  count: number;
+  samples_count?: number;
+}
+
+export interface ClassStatsResponse {
+  total_classes: number;
+  max_count: number;
+  distribution: ClassStatsRow[];
+}
+
 export interface Filters {
   user: string;
   label: string;

@@ -6,7 +6,7 @@ import Button from "./ui/Button";
 import Badge from "./ui/Badge";
 import type { MediaPipeLandmark, CameraInfo, QualityInfo } from "../types";
 import { OneEuroFilter } from "../utils/oneEuro";
-import { TARGET_FRAMES, CAPTURE_COUNT } from "../config/capture";
+import { TARGET_FRAMES, CAPTURE_COUNT, FRAME_INTERVAL_MS } from "../config/capture";
 
 // Use module-scope fixed constants so they are stable across renders and
 // won't need to be added to hook dependency arrays.
@@ -48,9 +48,10 @@ export default function FullscreenCaptureModal({
   const [label, setLabel] = useState(initialLabel);
   const [user, setUser] = useState(initialUser);
   const [dialect, setDialect] = useState<string>("Bắc");
-  const [dialectList, setDialectList] = useState<string[]>(["Bắc", "Trung", "Nam"]);
+  const [dialectList, setDialectList] = useState<string[]>(["Bắc", "Trung", "Nam", "Cần Thơ"]);
   const [countdown, setCountdown] = useState(0);
   const [isReady, setIsReady] = useState(false);
+  const [paused, setPaused] = useState(false);
   
   // New state for capture management
   const [currentCaptureIndex, setCurrentCaptureIndex] = useState(0);
@@ -64,15 +65,18 @@ export default function FullscreenCaptureModal({
   
   // Refs to prevent stale closures
   const recordingRef = useRef(false);
+  const pausedRef = useRef(false);
   const framesRef = useRef<Array<{
     left_hand: MediaPipeLandmark[];
     right_hand: MediaPipeLandmark[];
   }>>([]);
   const modeRef = useRef<typeof mode>(mode);
   
-  // Add frame interval control for better training data
+  // Add frame interval control for better training data. Use centralized config.
   const lastFrameTimeRef = useRef(0);
-  const frameIntervalMs = useRef(100); // Default 100ms = 10 FPS, good for training
+  // Default sampling rate is defined in `src/config/capture.ts` as SAMPLE_FPS
+  // FRAME_INTERVAL_MS is computed there (Math.round(1000 / SAMPLE_FPS)).
+  const frameIntervalMs = useRef(FRAME_INTERVAL_MS);
 
   // Helper to compute lightweight quality metrics for a captured frameset
   const computeQuality = useCallback((capturedFrames: Array<{
@@ -391,6 +395,10 @@ export default function FullscreenCaptureModal({
   }, [recording]);
   
   useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+  
+  useEffect(() => {
     framesRef.current = frames;
   }, [frames]);
 
@@ -431,7 +439,17 @@ export default function FullscreenCaptureModal({
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('dialectList') || 'null');
-      if (Array.isArray(stored) && stored.length > 0) setDialectList(stored);
+      if (Array.isArray(stored) && stored.length > 0) {
+        // Auto-merge Cần Thơ if not present
+        const merged = Array.from(new Set([...stored, 'Cần Thơ']));
+        setDialectList(merged);
+        localStorage.setItem('dialectList', JSON.stringify(merged));
+      } else {
+        // Set default and save
+        const defaultList = ["Bắc", "Trung", "Nam", "Cần Thơ"];
+        setDialectList(defaultList);
+        localStorage.setItem('dialectList', JSON.stringify(defaultList));
+      }
       const storedSel = localStorage.getItem('dialectSelected');
       if (storedSel) setDialect(storedSel);
     } catch (e) {
@@ -479,6 +497,29 @@ export default function FullscreenCaptureModal({
   // intentionally omitted from dependencies to avoid unnecessary re-creations.
   }, []);
 
+  const handlePause = useCallback(() => {
+    setPaused(true);
+    pausedRef.current = true;
+    console.log('Recording paused at', framesRef.current.length, 'frames');
+  }, []);
+
+  const handleResume = useCallback(() => {
+    setPaused(false);
+    pausedRef.current = false;
+    lastFrameTimeRef.current = Date.now(); // reset timing to avoid skip
+    console.log('Recording resumed from', framesRef.current.length, 'frames');
+  }, []);
+
+  const handleRestart = useCallback(() => {
+    // Discard current frames and restart from zero
+    setFrames([]);
+    framesRef.current = [];
+    setPaused(false);
+    pausedRef.current = false;
+    lastFrameTimeRef.current = Date.now();
+    console.log('Recording restarted from beginning');
+  }, []);
+
   const handleStop = useCallback(() => {
     const collected = framesRef.current.length || 0;
     const required = targetFramesRef.current || 0;
@@ -491,6 +532,8 @@ export default function FullscreenCaptureModal({
 
     setRecording(false);
     recordingRef.current = false;
+    setPaused(false);
+    pausedRef.current = false;
 
       if (framesRef.current.length > 0) {
       const quality = computeQuality(framesRef.current);
@@ -549,7 +592,7 @@ export default function FullscreenCaptureModal({
       }
 
       // Capture logic (hands-only)
-      if (recordingRef.current) {
+      if (recordingRef.current && !pausedRef.current) {
         const currentTime = Date.now();
         if (currentTime - lastFrameTimeRef.current < frameIntervalMs.current) return;
         lastFrameTimeRef.current = currentTime;
@@ -836,6 +879,16 @@ export default function FullscreenCaptureModal({
       } else if (e.code === 'Escape') {
         console.log('Escape pressed - closing modal');
         handleCloseRef.current?.();
+      } else if (e.code === 'Space') {
+        // toggle pause/resume when recording
+        e.preventDefault();
+        if (recordingRef.current) {
+          if (pausedRef.current) {
+            handleResume();
+          } else {
+            handlePause();
+          }
+        }
       } else if (e.code === 'KeyS') {
         // toggle guide
         setShowGuide((s) => !s);
@@ -847,6 +900,8 @@ export default function FullscreenCaptureModal({
         if (recordingRef.current) {
           recordingRef.current = false;
           setRecording(false);
+          setPaused(false);
+          pausedRef.current = false;
           setFrames([]);
           framesRef.current = [];
           setMode('IDLE');
@@ -856,7 +911,7 @@ export default function FullscreenCaptureModal({
 
     document.addEventListener('keydown', handleKeyPress);
     return () => document.removeEventListener('keydown', handleKeyPress);
-  }, [isOpen, computeQuality]);
+  }, [isOpen, computeQuality, handlePause, handleResume]);
 
   if (!isOpen) return null;
 
@@ -976,6 +1031,71 @@ export default function FullscreenCaptureModal({
                     Lần chụp {currentCaptureIndex + 1} / {FIXED_CAPTURE_COUNT}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Paused Overlay */}
+          {recording && paused && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-20">
+              <div className="bg-gray-900 border border-gray-700 rounded-xl p-8 w-[500px]">
+                <div className="text-center">
+                  <div className="text-6xl mb-4">⏸️</div>
+                  <h3 className="text-3xl font-bold text-white mb-2">Đã tạm dừng</h3>
+                  <p className="text-gray-300 mb-6">Bạn muốn làm gì với dữ liệu hiện tại?</p>
+                  
+                  <div className="bg-gray-800 rounded-lg p-4 mb-6">
+                    <div className="flex justify-between text-sm mb-2">
+                      <span className="text-gray-400">Tiến độ:</span>
+                      <span className="text-white font-medium">{frames.length} / {FIXED_TARGET_FRAMES} khung</span>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-yellow-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.min((frames.length / FIXED_TARGET_FRAMES) * 100, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleResume}
+                      className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Tiếp tục thu (giữ {frames.length} khung)</span>
+                    </button>
+                    
+                    <button
+                      onClick={handleRestart}
+                      className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      <span>Bắt đầu lại từ đầu (xóa dữ liệu)</span>
+                    </button>
+
+                    {frames.length >= FIXED_TARGET_FRAMES && (
+                      <button
+                        onClick={() => {
+                          setPaused(false);
+                          pausedRef.current = false;
+                          handleStop();
+                        }}
+                        className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Hoàn tất và lưu</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1165,20 +1285,37 @@ export default function FullscreenCaptureModal({
                 </svg>
                 {FIXED_CAPTURE_COUNT > 1 ? `Bắt đầu chụp (${FIXED_CAPTURE_COUNT}x)` : 'Bắt đầu chụp'} (Enter)
               </Button>
+            ) : paused ? (
+              <div className="text-center py-4 text-gray-400">
+                <span className="text-yellow-500 font-medium">⏸ Đã tạm dừng</span>
+                <p className="text-sm mt-1">Xem các tùy chọn trên màn hình</p>
+              </div>
             ) : (
-              <Button
-                onClick={handleStop}
-                className="w-full py-4 text-lg font-medium"
-                variant="danger"
-                disabled={frames.length < FIXED_TARGET_FRAMES}
-                title={frames.length < FIXED_TARGET_FRAMES ? `Cần ${FIXED_TARGET_FRAMES} khung trước khi dừng` : undefined}
-              >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6v6H9z" />
-                </svg>
-                Dừng ghi
-              </Button>
+              <>
+                <Button
+                  onClick={handlePause}
+                  className="w-full py-4 text-lg font-medium bg-yellow-600 hover:bg-yellow-500"
+                  variant="secondary"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Tạm dừng (Space)
+                </Button>
+                <Button
+                  onClick={handleStop}
+                  className="w-full py-3"
+                  variant="danger"
+                  disabled={frames.length < FIXED_TARGET_FRAMES}
+                  title={frames.length < FIXED_TARGET_FRAMES ? `Cần ${FIXED_TARGET_FRAMES} khung trước khi dừng` : undefined}
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6v6H9z" />
+                  </svg>
+                  Dừng và lưu
+                </Button>
+              </>
             )}
             
             <Button

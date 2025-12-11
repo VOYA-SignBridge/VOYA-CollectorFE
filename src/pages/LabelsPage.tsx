@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { getLabels, createLabel, updateLabel, deleteLabel } from "../api/dataset";
-import type { Label } from "../types";
+import { getLabels, getClassesList, getClassesStats } from "../api/dataset";
+import type { Label, ClassRow } from "../types";
 import ErrorBanner from "../components/ErrorBanner";
 import PageHeader from "../components/ui/PageHeader";
 import Button from "../components/ui/Button";
@@ -10,36 +10,149 @@ import Badge from "../components/ui/Badge";
 
 export default function LabelsPage() {
   const [labels, setLabels] = useState<Label[]>([]);
-  const [newLabel, setNewLabel] = useState("");
+  const [classes, setClasses] = useState<ClassRow[] | null>(null);
+  const [sampleCounts, setSampleCounts] = useState<Record<string, number>>({});
+  const [language, setLanguage] = useState<string>('vn');
+  const [dialect, setDialect] = useState<string>(''); // Empty = all dialects
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<boolean>(false);
-  const [editLabel, setEditLabel] = useState<Label | null>(null);
-  const [updating, setUpdating] = useState(false);
   const [search, setSearch] = useState<string>("");
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-  const filteredLabels = useMemo(() => {
+  // Dialect normalization helper: map various forms to canonical slugs used by BE
+  const normalizeDialect = (d?: string) => {
+    if (!d) return '';
+    const s = String(d).toLowerCase().trim();
+    // common variants map
+    const map: Record<string, string> = {
+      'chung': 'common',
+      'common': 'common',
+      'bac': 'bac',
+      'bắc': 'bac',
+      'nam': 'nam',
+      'trung': 'trung',
+      'hoa-de': 'hoa-de',
+      'hoa de': 'hoa-de',
+      'hoade': 'hoa-de',
+      'cần thơ': 'can-tho',
+      'can tho': 'can-tho',
+      'cantho': 'can-tho',
+      'can-tho': 'can-tho',
+    };
+    return map[s] ?? s;
+  };
+
+  // Normalize either `classes` (new BE) or legacy `labels` into a common render shape
+  type RenderItem = {
+    class_uid?: string;
+    class_idx: number;
+    slug: string;
+    label_original: string;
+    created_at?: string;
+    dialect?: string;
+    folder_name?: string;
+    samples_count?: number;
+    is_common_language?: boolean;
+    is_common_global?: boolean;
+  };
+
+  const renderItems = useMemo<RenderItem[]>(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return labels;
-    return labels.filter((l) => {
+    const raw: RenderItem[] = [];
+    if (classes && classes.length > 0) {
+      for (const c of classes) {
+        // Client-side dialect filter if dialect is selected (use normalized forms)
+        const cDialect = normalizeDialect(c.dialect);
+        if (dialect && cDialect && dialect !== '' && cDialect !== dialect) {
+          continue;
+        }
+        raw.push({
+          class_uid: c.class_uid,
+          class_idx: typeof c.class_idx === 'string' ? parseInt(c.class_idx, 10) : Number(c.class_idx),
+          slug: c.slug,
+          label_original: c.label_original,
+          created_at: c.created_at,
+          dialect: cDialect || c.dialect,
+          folder_name: c.folder_name,
+          samples_count: sampleCounts[c.class_uid] ?? 0,
+          is_common_language: String(c.is_common_language) === '1' || c.is_common_language === true,
+          is_common_global: String(c.is_common_global) === '1' || c.is_common_global === true,
+        });
+      }
+    } else {
+      for (const l of labels) {
+        raw.push({
+          class_idx: l.class_idx,
+          slug: l.slug,
+          label_original: l.label_original,
+          created_at: undefined,
+          samples_count: 0,
+        });
+      }
+    }
+
+    if (!q) return raw;
+    return raw.filter((r) => {
       return (
-        String(l.class_idx).includes(q) ||
-        (l.label_original || "").toLowerCase().includes(q) ||
-        (l.slug || "").toLowerCase().includes(q)
+        String(r.class_idx).includes(q) ||
+        (r.label_original || '').toLowerCase().includes(q) ||
+        (r.slug || '').toLowerCase().includes(q)
       );
     });
-  }, [labels, search]);
+  }, [classes, labels, search, sampleCounts, dialect]);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const result = await getLabels();
+        setLoading(true);
+        setError(null); // Clear previous errors
+        // Try modern classes endpoint first - KHÔNG gửi dialect để lấy TẤT CẢ
+        console.log('[LabelsPage] Fetching classes list...');
+        const classesRes = await getClassesList(language, undefined);
+        console.log('[LabelsPage] getClassesList result:', classesRes);
+        
         if (!mounted) return;
-        if (result.ok) setLabels(result.data);
-        else setError(result.error);
+        if (classesRes.ok) {
+          // Debug: log classes response received from backend
+          // eslint-disable-next-line no-console
+          console.debug('[LabelsPage] getClassesList:', classesRes.data);
+          setClasses(classesRes.data.items || []);
+          console.log('[LabelsPage] Classes set:', classesRes.data.items?.length || 0, 'items');
+
+          // fetch stats and map counts by class_uid - cũng KHÔNG filter dialect
+          console.log('[LabelsPage] Fetching classes stats...');
+          const statsRes = await getClassesStats(language, undefined);
+          console.log('[LabelsPage] getClassesStats result:', statsRes);
+          
+          if (statsRes.ok && statsRes.data) {
+            const map: Record<string, number> = {};
+            const distribution = statsRes.data.distribution || [];
+            for (const s of distribution) {
+              if (s.class_uid) map[s.class_uid] = s.count || s.samples_count || 0;
+            }
+            // Debug: log sample count mapping size
+            // eslint-disable-next-line no-console
+            console.debug('[LabelsPage] sampleCounts mapped for', Object.keys(map).length, 'classes');
+            setSampleCounts(map);
+          } else {
+            console.warn('[LabelsPage] Stats fetch failed or empty:', statsRes);
+          }
+        } else {
+          console.warn('[LabelsPage] getClassesList failed, trying legacy endpoint. Error:', classesRes.error);
+          // fallback to legacy labels endpoint
+          const legacy = await getLabels();
+          if (!mounted) return;
+          if (legacy.ok) {
+            console.log('[LabelsPage] Legacy labels loaded:', legacy.data.length);
+            setLabels(legacy.data);
+          } else {
+            console.error('[LabelsPage] Legacy labels also failed:', legacy.error);
+            setError(legacy.error);
+          }
+        }
       } catch (err: unknown) {
+        console.error('[LabelsPage] Exception during fetch:', err);
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg || "Failed to load labels");
       } finally {
@@ -49,83 +162,10 @@ export default function LabelsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
-
-  const handleAdd = async () => {
-    if (!newLabel.trim()) return setError("Label cannot be empty");
-    
-    setCreating(true);
-    setError(null);
-    
-    try {
-      const res = await createLabel(newLabel.trim());
-      if (res.ok) {
-        setLabels((s) => [...s, res.data]);
-        setNewLabel("");
-      } else {
-        setError(res.error);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg || "Failed to create label");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleEditLabel = (label: Label) => {
-    setEditLabel(label);
-    setNewLabel(label.label_original);
-    setEditing(true);
-    setError(null);
-  };
-
-  const handleDeleteLabel = async (label: Label) => {
-    if (!confirm(`Are you sure you want to delete label "${label.label_original}"? This action cannot be undone.`)) return;
-    setError(null);
-    try {
-      setLoading(true);
-      const res = await deleteLabel(label.class_idx);
-      if (res.ok) {
-        setLabels(prev => prev.filter(l => l.class_idx !== label.class_idx));
-      } else {
-        setError(res.error || 'Failed to delete label');
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg || "Failed to delete label");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdate = async () => {
-    if (!editLabel) return;
-    const trimmed = newLabel.trim();
-    if (!trimmed) return setError('Label cannot be empty');
-
-    setUpdating(true);
-    setError(null);
-    try {
-      const res = await updateLabel(editLabel.class_idx, trimmed);
-      if (res.ok) {
-        setLabels(prev => prev.map(l => l.class_idx === editLabel.class_idx ? res.data : l));
-        setEditLabel(null);
-        setEditing(false);
-        setNewLabel('');
-      } else {
-        setError(res.error || 'Failed to update label');
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg || 'Failed to update label');
-    } finally {
-      setUpdating(false);
-    }
-  };
+  }, [language]); // Chỉ phụ thuộc language, KHÔNG phụ thuộc dialect
 
   const exportJSON = () => {
-    const data = JSON.stringify(labels, null, 2);
+    const data = JSON.stringify(classes && classes.length > 0 ? classes : labels, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -137,9 +177,13 @@ export default function LabelsPage() {
 
   const exportCSV = useMemo(() => {
     const rows = ['class_idx,label_original,slug'];
-    labels.forEach(l => rows.push(`${l.class_idx},"${l.label_original.replace(/"/g, '""')}",${l.slug}`));
+    if (classes && classes.length > 0) {
+      classes.forEach(c => rows.push(`${c.class_idx},"${String(c.label_original).replace(/"/g, '""')}",${c.slug}`));
+    } else {
+      labels.forEach(l => rows.push(`${l.class_idx},"${l.label_original.replace(/"/g, '""')}",${l.slug}`));
+    }
     return rows.join('\n');
-  }, [labels]);
+  }, [labels, classes]);
 
   const downloadCSV = () => {
     const blob = new Blob([exportCSV], { type: 'text/csv' });
@@ -151,18 +195,14 @@ export default function LabelsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleAdd();
-    }
-  };
+
 
   return (
     <div className="space-y-6">
       <PageHeader 
-        title="Label Management" 
-        subtitle="Create and manage classification labels for your dataset. Labels help organize and categorize your data samples."
-        breadcrumb={["Dataset", "Labels"]}
+        title="Thư viện nhãn" 
+        subtitle="Quản lý và tìm kiếm các nhãn ngôn ngữ ký hiệu."
+        breadcrumb={["Dữ liệu", "Nhãn"]}
       />
 
       {error && (
@@ -174,66 +214,120 @@ export default function LabelsPage() {
         />
       )}
 
-      {/* Create new label */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-          <span className="mr-2">🏷️</span>
-          Create New Label
-        </h2>
-        
-        <div className="flex gap-3">
-          <input
-            className="input flex-1"
-            placeholder="Enter label name (e.g., 'walking', 'sitting', 'jumping')"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-            onKeyPress={handleKeyPress}
-            disabled={creating}
-          />
-          <Button 
-            onClick={handleAdd} 
-            loading={creating}
-            disabled={!newLabel.trim() || creating}
-          >
-            Create Label
-          </Button>
+      {/* Stats Overview */}
+      {!loading && renderItems.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="card bg-gradient-to-br from-indigo-50 to-indigo-100 border-indigo-200">
+            <div className="text-sm font-medium text-indigo-600">Tổng nhãn</div>
+            <div className="text-3xl font-bold text-indigo-900 mt-1">{renderItems.length}</div>
+            <div className="text-xs text-indigo-600 mt-2">trong {language === 'vn' ? 'Tiếng Việt' : 'English'}</div>
+          </div>
+          
+          <div className="card bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+            <div className="text-sm font-medium text-green-600">Tổng mẫu</div>
+            <div className="text-3xl font-bold text-green-900 mt-1">
+              {renderItems.reduce((sum, item) => sum + (item.samples_count ?? 0), 0)}
+            </div>
+            <div className="text-xs text-green-600 mt-2">video samples</div>
+          </div>
+          
+          <div className="card bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+            <div className="text-sm font-medium text-purple-600">Phổ biến</div>
+            <div className="text-3xl font-bold text-purple-900 mt-1">
+              {renderItems.filter(item => item.is_common_language || item.is_common_global).length}
+            </div>
+            <div className="text-xs text-purple-600 mt-2">nhãn phổ biến</div>
+          </div>
+          
+          <div className="card bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
+            <div className="text-sm font-medium text-orange-600">Phương ngữ</div>
+            <div className="text-3xl font-bold text-orange-900 mt-1">
+              {new Set(renderItems.map(item => item.dialect)).size}
+            </div>
+            <div className="text-xs text-orange-600 mt-2">vùng miền</div>
+          </div>
         </div>
-        
-        <div className="mt-3 text-sm text-gray-600">
-          💡 Use descriptive names that clearly identify the action or state
-        </div>
-      </div>
+      )}
 
       {/* Labels list */}
       <div className="card">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-            <span className="mr-2">📋</span>
-            Available Labels
-            {!loading && (
-              <Badge variant="info" className="ml-3">
-                {labels.length} labels
-              </Badge>
-            )}
-          </h2>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center">
+              📚 Danh sách nhãn
+              {!loading && (
+                <Badge variant="info" className="ml-3">
+                  {renderItems.length}
+                </Badge>
+              )}
+            </h2>
+            
+            <div className="flex items-center gap-2">
+              {!loading && renderItems.length > 0 && (
+                <>
+                  <Button variant="secondary" size="sm" onClick={exportJSON}>
+                    <span className="text-xs">📥 JSON</span>
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={downloadCSV}>
+                    <span className="text-xs">📥 CSV</span>
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
           
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-3">
+            <div className="flex gap-2">
+              <select className="input text-sm" value={language} onChange={(e) => setLanguage(e.target.value)}>
+                <option value="vn">🇻🇳 Tiếng Việt</option>
+                <option value="en">🇬🇧 English</option>
+              </select>
+              <select className="input text-sm" value={dialect} onChange={(e) => setDialect(e.target.value)}>
+                <option value="">🗺️ Tất cả vùng</option>
+                <option value="common">Chung</option>
+                <option value="bac">Miền Bắc</option>
+                <option value="nam">Miền Nam</option>
+                <option value="can-tho">Cần Thơ</option>
+                <option value="trung">Miền Trung</option>
+                <option value="hoa-de">Hòa Đê</option>
+              </select>
+            </div>
+            
             <div className="flex-1">
               <input
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search labels, slug or id..."
+                placeholder="🔍 Tìm kiếm nhãn, slug hoặc ID..."
                 className="input w-full"
-                aria-label="Search labels"
+                aria-label="Tìm kiếm nhãn"
               />
             </div>
-            {!loading && labels.length > 0 && (
-              <div className="flex items-center space-x-2">
-                <Button variant="secondary" size="sm" onClick={exportJSON}>Export JSON</Button>
-                <Button variant="secondary" size="sm" onClick={downloadCSV}>Export CSV</Button>
-              </div>
-            )}
+            
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+              <button
+                className={`px-3 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'grid' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+                onClick={() => setViewMode('grid')}
+                title="Xem dạng lưới"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                </svg>
+              </button>
+              <button
+                className={`px-3 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'list' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+                onClick={() => setViewMode('list')}
+                title="Xem dạng danh sách"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -242,88 +336,127 @@ export default function LabelsPage() {
             <LoadingSpinner size="lg" className="text-indigo-400" />
             <span className="ml-3 text-gray-600">Loading labels...</span>
           </div>
-        ) : labels.length === 0 ? (
+        ) : renderItems.length === 0 ? (
           <EmptyState 
-            title="No labels created yet" 
-            description="Start by creating your first label above. Labels help organize your dataset into meaningful categories."
+            title="Không tìm thấy nhãn" 
+            description="Thử điều chỉnh bộ lọc hoặc tìm kiếm với từ khóa khác."
           />
         ) : (
-          <div className="grid-auto-fill">
-            {filteredLabels.map((label) => (
+          <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5' : 'space-y-3'}>
+            {renderItems.map((item) => (
               <div 
-                key={label.class_idx} 
-                className="card card-compact glass-hover group cursor-pointer"
+                key={item.class_uid ?? item.class_idx}
+                className={`${
+                  viewMode === 'grid' 
+                    ? 'card group hover:shadow-xl hover:-translate-y-1 transition-all duration-300 p-6 border-2 border-transparent hover:border-indigo-200' 
+                    : 'card group hover:bg-gradient-to-r hover:from-indigo-50 hover:to-purple-50 transition-all duration-200 p-5'
+                }`}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Badge variant="default" size="sm">
-                        #{label.class_idx}
-                      </Badge>
-                      <div className="font-medium text-gray-900 truncate">
-                        {label.label_original}
+                <div className={`flex ${
+                  viewMode === 'grid' ? 'flex-col' : 'flex-row items-center justify-between'
+                }`}>
+                  <div className="flex-1 min-w-0 w-full">
+                    {/* Header */}
+                    <div className="flex items-start gap-3 mb-4">
+                      <div className="flex-shrink-0">
+                        <span className="text-3xl">🏷️</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-bold text-xl text-gray-900 leading-tight mb-1 truncate">
+                          {item.label_original}
+                        </h3>
+                        <p className="text-sm text-gray-500 font-mono truncate">
+                          {item.slug}
+                        </p>
                       </div>
                     </div>
                     
-                    <div className="text-sm text-gray-600 font-mono">
-                      {label.slug}
-                    </div>
-                    
-                    <div className="mt-3 flex items-center text-xs text-gray-500">
-                      <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
-                      Active
-                    </div>
+                    {/* Badges */}
+                    {viewMode === 'grid' && (
+                      <div className="flex items-center gap-2 flex-wrap mb-4">
+                        {item.class_idx !== -1 && (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
+                            #{item.class_idx}
+                          </span>
+                        )}
+                        {item.dialect === 'common' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">
+                            Chung
+                          </span>
+                        )}
+                        {item.dialect === 'bac' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                            Miền Bắc
+                          </span>
+                        )}
+                        {item.dialect === 'nam' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                            Miền Nam
+                          </span>
+                        )}
+                        {item.dialect === 'trung' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                            Miền Trung
+                          </span>
+                        )}
+                        {item.dialect === 'hoa-de' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">
+                            Hòa Đê
+                          </span>
+                        )}
+                        {item.dialect === 'can-tho' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-cyan-100 text-cyan-800">
+                            Cần Thơ
+                          </span>
+                        )}
+                        {item.is_common_global && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                            ⭐ Toàn cầu
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="flex items-center gap-1">
-                      <button 
-                        className="btn btn-ghost p-2 text-blue-600 hover:text-blue-800"
-                        title="Edit label"
-                        onClick={() => handleEditLabel(label)}
-                      >
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                        </svg>
-                      </button>
-                      <button 
-                        className="btn btn-ghost p-2 text-red-600 hover:text-red-800"
-                        title="Delete label"
-                  onClick={() => handleDeleteLabel(label)}
-                      >
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                      </button>
+                  {/* List view */}
+                  {viewMode === 'list' && (
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {item.class_idx !== -1 && (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
+                            #{item.class_idx}
+                          </span>
+                        )}
+                        {item.dialect === 'common' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">Chung</span>
+                        )}
+                        {item.dialect === 'bac' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">Miền Bắc</span>
+                        )}
+                        {item.dialect === 'nam' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Miền Nam</span>
+                        )}
+                        {item.dialect === 'trung' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Miền Trung</span>
+                        )}
+                        {item.dialect === 'hoa-de' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">Hòa Đê</span>
+                        )}
+                        {item.dialect === 'can-tho' && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-cyan-100 text-cyan-800">Cần Thơ</span>
+                        )}
+                        {item.is_common_global && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">⭐ Toàn cầu</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
-
-        {/* Edit Modal */}
-        {editing && editLabel && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-white rounded-lg shadow-xl w-96 p-6">
-              <h3 className="text-lg font-semibold mb-3">Edit Label #{editLabel.class_idx}</h3>
-              <div className="mb-4">
-                <input
-                  className="input w-full"
-                  value={newLabel}
-                  onChange={(e) => setNewLabel(e.target.value)}
-                  disabled={updating}
-                />
-              </div>
-              <div className="flex justify-end space-x-2">
-                <Button variant="secondary" onClick={() => { setEditing(false); setEditLabel(null); setNewLabel(''); }}>Cancel</Button>
-                <Button onClick={handleUpdate} loading={updating}>Save</Button>
-              </div>
-            </div>
-          </div>
-        )}
     </div>
   );
 }

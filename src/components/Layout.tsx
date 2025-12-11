@@ -7,11 +7,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const navigation = [
-    { name: "Dashboard", href: "/dashboard", icon: "📊" },
-    { name: "Upload", href: "/upload", icon: "📤" },
-    { name: "Labels", href: "/labels", icon: "🏷️" },
-    { name: "Samples", href: "/samples", icon: "�" },
-    { name: "Jobs", href: "/jobs", icon: "⚙️" }
+    { name: "Bảng điều khiển", href: "/dashboard", icon: "📊" },
+    { name: "Tải lên", href: "/upload", icon: "📤" },
+    { name: "Thư viện nhãn", href: "/labels", icon: "🏷️" },
+    { name: "Mẫu dữ liệu", href: "/samples", icon: "🎬" },
+    { name: "Công việc", href: "/jobs", icon: "⚙️" }
   ];
 
   const NavItem = ({ item }: { item: typeof navigation[0] }) => (
@@ -62,7 +62,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               </div>
               <div className="ml-3">
                 <div className="text-slate-800 font-semibold text-lg">VOYA</div>
-                <div className="text-slate-500 text-xs">Dataset Collector</div>
+                <div className="text-slate-500 text-xs">Thu thập dữ liệu</div>
               </div>
             </div>
           </div>
@@ -77,7 +77,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {/* Footer */}
           <div className="p-4 border-t border-slate-200/50">
             <div className="text-xs text-slate-500 text-center">
-              Version 1.0.0 • Built with ❤️
+              Phiên bản 1.0.0 © 2024 Voya Inc.
             </div>
           </div>
         </div>
@@ -99,7 +99,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             </button>
             <div className="hidden lg:block">
               <h1 className="text-xl font-semibold bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">
-                Dataset Management
+                Quản lý dữ liệu
               </h1>
             </div>
           </div>
@@ -107,7 +107,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div className="flex items-center space-x-4">
             <div className="hidden sm:flex items-center space-x-2">
               <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
-              <span className="text-sm text-slate-600">Connected</span>
+              <span className="text-sm text-slate-600">Đã kết nối</span>
             </div>
             
             {/* Theme and Settings */}
@@ -132,7 +132,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               </button>
             </div>
             
-            <Button size="sm">New Session</Button>
+            <Button size="sm">Phiên mới</Button>
           </div>
         </header>
 

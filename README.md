@@ -1,6 +1,6 @@
 # VOYA Motion Capture Frontend
 
-A professional React + TypeScript application for collecting and processing motion capture data using MediaPipe Holistic for real-time pose detection.
+A professional React + TypeScript application for collecting and processing motion capture data using MediaPipe Hands for real-time pose detection.
 
 ## 🚀 Quick Start
 
