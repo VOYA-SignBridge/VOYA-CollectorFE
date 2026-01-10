@@ -7,11 +7,26 @@ import Badge from "./ui/Badge";
 import type { MediaPipeLandmark, CameraInfo, QualityInfo } from "../types";
 import { OneEuroFilter } from "../utils/oneEuro";
 import { TARGET_FRAMES, CAPTURE_COUNT, FRAME_INTERVAL_MS } from "../config/capture";
+import SpeechInputButton from "./SpeechInputButton";
 
 // Use module-scope fixed constants so they are stable across renders and
 // won't need to be added to hook dependency arrays.
 const FIXED_TARGET_FRAMES = TARGET_FRAMES;
 const FIXED_CAPTURE_COUNT = CAPTURE_COUNT;
+
+const parseBoolEnv = (value: unknown, fallback: boolean) => {
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  return fallback;
+};
+
+// Default to selfie-style mirroring (front camera usually feels "correct" mirrored).
+// Override with `VITE_MIRROR_PREVIEW=0` if you want a non-mirrored, third-person view.
+const MIRROR_PREVIEW = parseBoolEnv(import.meta.env.VITE_MIRROR_PREVIEW, true);
+// If MediaPipe handedness feels swapped for your setup, enable this.
+const SWAP_HANDEDNESS = parseBoolEnv(import.meta.env.VITE_SWAP_HANDEDNESS, false);
 
 interface FullscreenCaptureModalProps {
   isOpen: boolean;
@@ -62,6 +77,19 @@ export default function FullscreenCaptureModal({
   const [mode, setMode] = useState<'IDLE' | 'COUNTDOWN' | 'RECORD'>('IDLE');
   // Track whether hands are currently visible to gate frame capture
   const [handsVisible, setHandsVisible] = useState(false);
+  // Quick suggestions for signer name (shared across pages via localStorage)
+  const [recentUsers, setRecentUsers] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('recentSigners');
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) {
+        return parsed.filter((x) => typeof x === 'string').slice(0, 5);
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
   
   // Refs to prevent stale closures
   const recordingRef = useRef(false);
@@ -71,6 +99,19 @@ export default function FullscreenCaptureModal({
     right_hand: MediaPipeLandmark[];
   }>>([]);
   const modeRef = useRef<typeof mode>(mode);
+  const rememberUser = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setRecentUsers((prev) => {
+      const next = [trimmed, ...prev.filter((x) => x !== trimmed)].slice(0, 5);
+      try {
+        localStorage.setItem('recentSigners', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
   
   // Add frame interval control for better training data. Use centralized config.
   const lastFrameTimeRef = useRef(0);
@@ -182,6 +223,14 @@ export default function FullscreenCaptureModal({
   // Low-latency render state (lerp towards raw each frame) to reduce perceived lag
   const renderPrevRef = useRef<Record<string, MediaPipeLandmark>>({});
 
+  // Simple temporal smoothing for hand presence and preview stability
+  const PRESENCE_HISTORY_SIZE = 5;
+  const leftPresenceHistoryRef = useRef<boolean[]>([]);
+  const rightPresenceHistoryRef = useRef<boolean[]>([]);
+  const visibilityStateRef = useRef<{ left: boolean; right: boolean }>({ left: false, right: false });
+  const lastRenderedLeftRef = useRef<MediaPipeLandmark[] | undefined>(undefined);
+  const lastRenderedRightRef = useRef<MediaPipeLandmark[] | undefined>(undefined);
+
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
   const getRenderLandmarks = useCallback((raw: MediaPipeLandmark[] | undefined, group = 'pose') => {
@@ -223,7 +272,13 @@ export default function FullscreenCaptureModal({
 
     // Clear and draw video
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
+    ctx.save();
+    if (MIRROR_PREVIEW) {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+
     if (video && video.readyState >= 2 && video.videoWidth > 0) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     } else if (data.image) {
@@ -233,35 +288,40 @@ export default function FullscreenCaptureModal({
     // Draw landmarks with simplified styling for better performance
     if (data.leftHandLandmarks) {
       // @ts-expect-error - HAND_CONNECTIONS types from mediapipe are not available in this project
-      drawing.drawConnectors(ctx, data.leftHandLandmarks, HAND_CONNECTIONS, { 
-        color: "#FF6B35", 
-        lineWidth: 2 
+      drawing.drawConnectors(ctx, data.leftHandLandmarks, HAND_CONNECTIONS, {
+        color: "#FF6B35",
+        lineWidth: 2
       });
-      drawing.drawLandmarks(ctx, data.leftHandLandmarks, { 
-        color: "#FF6B35", 
-        radius: 5 
-      });
-    }
-    
-    if (data.rightHandLandmarks) {
-      // @ts-expect-error - HAND_CONNECTIONS types from mediapipe are not available in this project
-      drawing.drawConnectors(ctx, data.rightHandLandmarks, HAND_CONNECTIONS, { 
-        color: "#4ECDC4", 
-        lineWidth: 2 
-      });
-      drawing.drawLandmarks(ctx, data.rightHandLandmarks, { 
-        color: "#4ECDC4", 
-        radius: 5 
+      drawing.drawLandmarks(ctx, data.leftHandLandmarks, {
+        color: "#FF6B35",
+        radius: 5
       });
     }
 
-    // Draw HUD (MODE / HANDS / FRAMES) top-left
+    if (data.rightHandLandmarks) {
+      // @ts-expect-error - HAND_CONNECTIONS types from mediapipe are not available in this project
+      drawing.drawConnectors(ctx, data.rightHandLandmarks, HAND_CONNECTIONS, {
+        color: "#4ECDC4",
+        lineWidth: 2
+      });
+      drawing.drawLandmarks(ctx, data.rightHandLandmarks, {
+        color: "#4ECDC4",
+        radius: 5
+      });
+    }
+
+    ctx.restore();
+
+    // Draw HUD (MODE / HANDS / FRAMES / VISIBILITY / FLAGS) top-left
     try {
       const hudPadding = 8;
+      const vis = visibilityStateRef.current;
       const lines = [
         `MODE: ${modeRef.current}`,
         `HANDS: ${((data.leftHandLandmarks?.length ?? 0) > 0 ? 1 : 0) + ((data.rightHandLandmarks?.length ?? 0) > 0 ? 1 : 0)}`,
-        `FRAMES: ${framesRef.current.length}/${targetFramesRef.current}`
+        `FRAMES: ${framesRef.current.length}/${targetFramesRef.current}`,
+        `VIS: L=${vis.left ? 'ON' : 'OFF'} R=${vis.right ? 'ON' : 'OFF'}`,
+        `FLAGS: MIRROR=${MIRROR_PREVIEW ? 'ON' : 'OFF'} SWAP=${SWAP_HANDEDNESS ? 'ON' : 'OFF'}`
       ];
       ctx.save();
       ctx.font = '14px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
@@ -554,31 +614,87 @@ export default function FullscreenCaptureModal({
 
     hands.setOptions({
       maxNumHands: 2,
-      modelComplexity: 0,
-      refineLandmarks: false,
-      minDetectionConfidence: 0.7,
+      modelComplexity: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.6,
       minTrackingConfidence: 0.7,
     });
 
     console.log('MediaPipe Hands initialized');
 
     hands.onResults((results: unknown) => {
-      const r = results as { multiHandLandmarks?: MediaPipeLandmark[][]; multiHandedness?: Array<{ label?: string }>; image?: HTMLImageElement | HTMLVideoElement };
-      // Map multi-hand landmarks to left/right by using multiHandedness
-      let leftHandLandmarks: MediaPipeLandmark[] | undefined = undefined;
-      let rightHandLandmarks: MediaPipeLandmark[] | undefined = undefined;
-      if (r.multiHandLandmarks && r.multiHandedness) {
+      const r = results as { multiHandLandmarks?: MediaPipeLandmark[][]; multiHandedness?: Array<{ label?: string; score?: number }>; image?: HTMLImageElement | HTMLVideoElement };
+
+      let leftHandLandmarks: MediaPipeLandmark[] | undefined;
+      let rightHandLandmarks: MediaPipeLandmark[] | undefined;
+      // Simple per-frame mapping: use MediaPipe handedness labels with
+      // optional global swap, without extra positional locking.
+      if (r.multiHandLandmarks && r.multiHandedness && r.multiHandLandmarks.length === r.multiHandedness.length) {
         for (let i = 0; i < r.multiHandLandmarks.length; i++) {
-          const lm = r.multiHandLandmarks[i];
-          const handedness = r.multiHandedness[i];
-          const label = handedness?.label;
-          if (label === 'Left') leftHandLandmarks = lm as MediaPipeLandmark[];
-          else if (label === 'Right') rightHandLandmarks = lm as MediaPipeLandmark[];
+          const lm = r.multiHandLandmarks[i] as MediaPipeLandmark[];
+          const h = r.multiHandedness[i] as { label?: string };
+          const rawLabel = h.label;
+          const effectiveLabel = SWAP_HANDEDNESS
+            ? rawLabel === 'Left'
+              ? 'Right'
+              : rawLabel === 'Right'
+              ? 'Left'
+              : rawLabel
+            : rawLabel;
+
+          if (effectiveLabel === 'Left' && !leftHandLandmarks) {
+            leftHandLandmarks = lm;
+          } else if (effectiveLabel === 'Right' && !rightHandLandmarks) {
+            rightHandLandmarks = lm;
+          }
         }
       }
 
-      const renderLeft = getRenderLandmarks(leftHandLandmarks, 'leftHand');
-      const renderRight = getRenderLandmarks(rightHandLandmarks, 'rightHand');
+      // --- Temporal smoothing for presence & preview ---
+      const leftDetectedNow = !!(leftHandLandmarks && leftHandLandmarks.length > 0);
+      const rightDetectedNow = !!(rightHandLandmarks && rightHandLandmarks.length > 0);
+
+      // Update presence history (ring buffer style)
+      leftPresenceHistoryRef.current.push(leftDetectedNow);
+      if (leftPresenceHistoryRef.current.length > PRESENCE_HISTORY_SIZE) {
+        leftPresenceHistoryRef.current.shift();
+      }
+      rightPresenceHistoryRef.current.push(rightDetectedNow);
+      if (rightPresenceHistoryRef.current.length > PRESENCE_HISTORY_SIZE) {
+        rightPresenceHistoryRef.current.shift();
+      }
+
+      const leftVotes = leftPresenceHistoryRef.current.filter(Boolean).length;
+      const rightVotes = rightPresenceHistoryRef.current.filter(Boolean).length;
+      const leftSmoothedVisible = leftVotes > leftPresenceHistoryRef.current.length / 2;
+      const rightSmoothedVisible = rightVotes > rightPresenceHistoryRef.current.length / 2;
+
+      visibilityStateRef.current = {
+        left: leftSmoothedVisible,
+        right: rightSmoothedVisible,
+      };
+
+      // Compute render landmarks with fallback to last non-empty frame
+      let renderLeft: MediaPipeLandmark[] = [];
+      let renderRight: MediaPipeLandmark[] = [];
+
+      if (leftDetectedNow) {
+        renderLeft = getRenderLandmarks(leftHandLandmarks, "leftHand");
+        lastRenderedLeftRef.current = renderLeft;
+      } else if (leftSmoothedVisible && lastRenderedLeftRef.current) {
+        renderLeft = lastRenderedLeftRef.current;
+      } else {
+        lastRenderedLeftRef.current = undefined;
+      }
+
+      if (rightDetectedNow) {
+        renderRight = getRenderLandmarks(rightHandLandmarks, "rightHand");
+        lastRenderedRightRef.current = renderRight;
+      } else if (rightSmoothedVisible && lastRenderedRightRef.current) {
+        renderRight = lastRenderedRightRef.current;
+      } else {
+        lastRenderedRightRef.current = undefined;
+      }
 
       renderDataRef.current = {
         leftHandLandmarks: renderLeft,
@@ -597,25 +713,38 @@ export default function FullscreenCaptureModal({
         if (currentTime - lastFrameTimeRef.current < frameIntervalMs.current) return;
         lastFrameTimeRef.current = currentTime;
 
-        const leftHas = (leftHandLandmarks?.length ?? 0) > 0;
-        const rightHas = (rightHandLandmarks?.length ?? 0) > 0;
+        // Prefer current detection; if temporarily lost but smoothed presence is ON,
+        // fall back to the last rendered landmarks to avoid empty frames.
+        let captureLeft = leftHandLandmarks;
+        let captureRight = rightHandLandmarks;
+
+        if (!captureLeft && leftSmoothedVisible && lastRenderedLeftRef.current) {
+          captureLeft = lastRenderedLeftRef.current;
+        }
+        if (!captureRight && rightSmoothedVisible && lastRenderedRightRef.current) {
+          captureRight = lastRenderedRightRef.current;
+        }
+
+        const leftHas = (captureLeft?.length ?? 0) > 0;
+        const rightHas = (captureRight?.length ?? 0) > 0;
 
         let leftVisible = false;
         let rightVisible = false;
-        if (leftHandLandmarks) leftVisible = leftHandLandmarks.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
-        if (rightHandLandmarks) rightVisible = rightHandLandmarks.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
+        if (captureLeft) leftVisible = captureLeft.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
+        if (captureRight) rightVisible = captureRight.some(lm => typeof lm.visibility === 'number' ? lm.visibility >= 0.5 : true);
 
         const anyHands = leftHas || rightHas;
         const anyVisible = leftVisible || rightVisible;
 
-        setHandsVisible(Boolean(anyVisible || anyHands));
+        // UI hint uses smoothed presence to reduce flicker
+        setHandsVisible(leftSmoothedVisible || rightSmoothedVisible || anyHands || anyVisible);
 
         if (!(anyVisible || anyHands)) {
           console.log('Skipping frame: no hands detected');
         } else {
           const landmarks = {
-            left_hand: filterLandmarks(leftHandLandmarks, 'leftHand') || [],
-            right_hand: filterLandmarks(rightHandLandmarks, 'rightHand') || [],
+            left_hand: filterLandmarks(captureLeft, 'leftHand') || [],
+            right_hand: filterLandmarks(captureRight, 'rightHand') || [],
           };
 
           framesRef.current.push(landmarks);
@@ -1154,7 +1283,7 @@ export default function FullscreenCaptureModal({
         </div>
 
         {/* Control Panel */}
-        <div className="w-80 bg-gray-900 border-l border-gray-700 flex flex-col">
+        <div className="w-96 bg-gray-900 border-l border-gray-700 flex flex-col">
           <div className="flex-1 p-6 space-y-6 overflow-y-auto">
             {/* Enhanced Form Fields with validation */}
             <div className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 rounded-xl p-5 border border-blue-500/20">
@@ -1166,14 +1295,23 @@ export default function FullscreenCaptureModal({
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-blue-300 mb-2">📝 Nhãn hành động *</label>
-                  <input
-                    type="text"
-                    value={label}
-                    onChange={(e) => setLabel(e.target.value)}
-                    placeholder="ví dụ: đi bộ, nhảy, vẫy tay"
-                    className="w-full px-4 py-3 bg-gray-800/80 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
-                    disabled={recording || countdown > 0}
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={label}
+                      onChange={(e) => setLabel(e.target.value)}
+                      placeholder="ví dụ: đi bộ, nhảy, vẫy tay"
+                      className="w-full pr-12 px-4 py-3 bg-gray-800/80 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                      disabled={recording || countdown > 0}
+                    />
+                    <div className="absolute inset-y-0 right-2 flex items-center">
+                      <SpeechInputButton
+                        onText={(text) => setLabel(text)}
+                        title="Dùng giọng nói để điền nhãn hành động"
+                        className="h-8 w-8"
+                      />
+                    </div>
+                  </div>
                   {!label && (
                     <p className="text-xs text-yellow-400 mt-1">⚠️ Nhãn hành động là bắt buộc</p>
                   )}
@@ -1181,16 +1319,41 @@ export default function FullscreenCaptureModal({
 
                 <div>
                   <label className="block text-sm font-medium text-blue-300 mb-2">👤 Người thực hiện *</label>
-                  <input
-                    type="text"
-                    value={user}
-                    onChange={(e) => setUser(e.target.value)}
-                    placeholder="ví dụ: user001, john_doe"
-                    className="w-full px-4 py-3 bg-gray-800/80 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
-                    disabled={recording || countdown > 0}
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={user}
+                      onChange={(e) => setUser(e.target.value)}
+                      placeholder="ví dụ: user001, john_doe"
+                      className="w-full pr-12 px-4 py-3 bg-gray-800/80 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                      disabled={recording || countdown > 0}
+                      onBlur={() => rememberUser(user)}
+                    />
+                    <div className="absolute inset-y-0 right-2 flex items-center">
+                      <SpeechInputButton
+                        onText={(text) => setUser(text)}
+                        title="Dùng giọng nói để điền tên người thực hiện"
+                        className="h-8 w-8"
+                      />
+                    </div>
+                  </div>
                   {!user && (
                     <p className="text-xs text-yellow-400 mt-1">⚠️ ID người dùng là bắt buộc</p>
+                  )}
+                  {recentUsers.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-blue-200">
+                      <span className="text-[11px] text-blue-300">Gợi ý:</span>
+                      {recentUsers.map((name) => (
+                        <button
+                          type="button"
+                          key={name}
+                          onClick={() => setUser(name)}
+                          className="px-2 py-1 rounded-full bg-blue-900/60 hover:bg-blue-800 text-blue-100 border border-blue-500/40 text-[11px]"
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
 
