@@ -1,0 +1,18 @@
+/* App container adjustments */
+#root {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.lead {
+  color: #475569; /* slate-600 */
+}
+
+.card + .card {
+  margin-top: 1rem;
+}
+
+.muted {
+  color: #94a3b8; /* slate-400 */
+}

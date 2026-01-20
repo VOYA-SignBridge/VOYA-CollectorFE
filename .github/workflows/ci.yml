@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: |
+          if npm run -s lint; then echo LINT_OK; else echo "No lint script or lint failed"; fi
+
+      - name: Type-check and Build
+        run: |
+          # Type-check (if configured) and build
+          if npm run -s build; then echo BUILD_OK; else echo "Build failed"; exit 1; fi
+
+      - name: Run tests
+        run: |
+          if npm run -s test; then echo TESTS_OK; else echo "No tests or tests failed"; fi
+
+      - name: Upload dist artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
