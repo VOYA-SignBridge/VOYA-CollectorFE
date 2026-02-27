@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { uploadVideo } from "../api/upload";
 import Button from "./ui/Button";
 import Badge from "./ui/Badge";
+import SpeechInputButton from "./SpeechInputButton";
 
 // ============================================================================
 // TYPES
@@ -68,6 +69,18 @@ export default function UploadVideoFormV2({ onError, onSuccess }: Props) {
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [recentUsers, setRecentUsers] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('recentSigners');
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) {
+        return parsed.filter((x) => typeof x === 'string').slice(0, 5);
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
@@ -469,6 +482,20 @@ export default function UploadVideoFormV2({ onError, onSuccess }: Props) {
       fileInputRef.current.click();
     }
   };
+
+  const rememberUser = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setRecentUsers((prev) => {
+      const next = [trimmed, ...prev.filter((x) => x !== trimmed)].slice(0, 5);
+      try {
+        localStorage.setItem('recentSigners', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
   
   // ============================================================================
   // RENDER
@@ -513,23 +540,51 @@ export default function UploadVideoFormV2({ onError, onSuccess }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Nhãn mặc định</label>
-              <input
-                type="text"
-                value={defaultLabel}
-                onChange={(e) => setDefaultLabel(e.target.value)}
-                placeholder="ví dụ: đi bộ"
-                className="input text-sm"
-              />
+              <div className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  value={defaultLabel}
+                  onChange={(e) => setDefaultLabel(e.target.value)}
+                  placeholder="ví dụ: đi bộ"
+                  className="input text-sm flex-1"
+                />
+                <SpeechInputButton
+                  onText={(text) => setDefaultLabel(text)}
+                  title="Dùng giọng nói để điền nhãn mặc định"
+                />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Người ký hiệu</label>
-              <input
-                type="text"
-                value={defaultUser}
-                onChange={(e) => setDefaultUser(e.target.value)}
-                placeholder="ví dụ: Trân"
-                className="input text-sm"
-              />
+              <div className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  value={defaultUser}
+                  onChange={(e) => setDefaultUser(e.target.value)}
+                  placeholder="ví dụ: Trân"
+                  className="input text-sm flex-1"
+                  onBlur={() => rememberUser(defaultUser)}
+                />
+                <SpeechInputButton
+                  onText={(text) => setDefaultUser(text)}
+                  title="Dùng giọng nói để điền tên người ký hiệu"
+                />
+              </div>
+              {recentUsers.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-blue-700">
+                  <span className="text-blue-500">Gợi ý:</span>
+                  {recentUsers.map((name) => (
+                    <button
+                      type="button"
+                      key={name}
+                      onClick={() => setDefaultUser(name)}
+                      className="px-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200"
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Bộ ngôn ngữ</label>
