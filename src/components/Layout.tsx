@@ -9,6 +9,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const navigation = [
     { name: "Bảng điều khiển", href: "/dashboard", icon: "📊" },
     { name: "Tải lên", href: "/upload", icon: "📤" },
+    { name: "Nhận diện", href: "/realtime", icon: "🖐️" },
     { name: "Thư viện nhãn", href: "/labels", icon: "🏷️" },
     { name: "Mẫu dữ liệu", href: "/samples", icon: "🎬" },
     { name: "Công việc", href: "/jobs", icon: "⚙️" }
